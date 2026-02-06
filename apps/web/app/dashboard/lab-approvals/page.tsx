@@ -95,6 +95,8 @@ export default function LabApprovalsPage() {
 
   // PDF modal
   const [selectedAnalysis, setSelectedAnalysis] = useState<AnalysisItem | null>(null);
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
 
   /* ---------- Fetch calendar data --------------------------------- */
 
@@ -191,7 +193,50 @@ export default function LabApprovalsPage() {
   }
 
   function handlePatientClick(analysis: AnalysisItem) {
+    handleSelectAnalysis(analysis);
+  }
+
+  // PDF blob URL 로드 (CORS 우회)
+  async function loadPdfBlob(analysisId: string) {
+    if (!accessToken) return;
+    setPdfLoading(true);
+    setPdfBlobUrl(null);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/lab-uploads/analyses/${analysisId}/export-pdf?token=${accessToken}`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('PDF 로드 실패');
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      setPdfBlobUrl(url);
+    } catch (err) {
+      console.error('PDF load error:', err);
+      alert('PDF를 불러올 수 없습니다.');
+    } finally {
+      setPdfLoading(false);
+    }
+  }
+
+  // 모달 닫을 때 blob URL 정리
+  function closePdfModal() {
+    if (pdfBlobUrl) {
+      URL.revokeObjectURL(pdfBlobUrl);
+    }
+    setPdfBlobUrl(null);
+    setSelectedAnalysis(null);
+  }
+
+  // 분석 선택 시 PDF 로드
+  function handleSelectAnalysis(analysis: AnalysisItem) {
     setSelectedAnalysis(analysis);
+    loadPdfBlob(analysis.id);
   }
 
   function handleDownloadPdf(analysisId: string) {
@@ -200,10 +245,9 @@ export default function LabApprovalsPage() {
     window.open(`${API_BASE}/api/lab-uploads/analyses/${analysisId}/export-pdf?token=${accessToken}&download=true`, '_blank');
   }
 
-  function handlePrintPdf(analysisId: string) {
-    if (!accessToken) return;
-    const pdfUrl = `${API_BASE}/api/lab-uploads/analyses/${analysisId}/export-pdf?token=${accessToken}`;
-    const printWindow = window.open(pdfUrl, '_blank');
+  function handlePrintPdf() {
+    if (!pdfBlobUrl) return;
+    const printWindow = window.open(pdfBlobUrl, '_blank');
     if (printWindow) {
       printWindow.onload = () => {
         printWindow.print();
@@ -430,7 +474,7 @@ export default function LabApprovalsPage() {
                 </div>
               </div>
               <button
-                onClick={() => setSelectedAnalysis(null)}
+                onClick={closePdfModal}
                 className="p-2 hover:bg-slate-100 rounded-lg transition"
               >
                 <X size={20} />
@@ -439,18 +483,32 @@ export default function LabApprovalsPage() {
 
             {/* PDF Preview */}
             <div className="flex-1 overflow-hidden p-4">
-              <iframe
-                src={`${API_BASE}/api/lab-uploads/analyses/${selectedAnalysis.id}/export-pdf?token=${accessToken}`}
-                className="w-full h-[500px] rounded-lg border border-slate-200"
-                title="PDF Preview"
-              />
+              {pdfLoading ? (
+                <div className="flex items-center justify-center h-[500px] bg-slate-50 rounded-lg border border-slate-200">
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto mb-3"></div>
+                    <p className="text-slate-500">PDF 로딩 중...</p>
+                  </div>
+                </div>
+              ) : pdfBlobUrl ? (
+                <iframe
+                  src={pdfBlobUrl}
+                  className="w-full h-[500px] rounded-lg border border-slate-200"
+                  title="PDF Preview"
+                />
+              ) : (
+                <div className="flex items-center justify-center h-[500px] bg-slate-50 rounded-lg border border-slate-200">
+                  <p className="text-slate-500">PDF를 불러올 수 없습니다.</p>
+                </div>
+              )}
             </div>
 
             {/* Action Buttons */}
             <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200">
               <button
-                onClick={() => handlePrintPdf(selectedAnalysis.id)}
-                className="flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition"
+                onClick={handlePrintPdf}
+                disabled={!pdfBlobUrl}
+                className="flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition disabled:opacity-50"
               >
                 <Printer size={16} />
                 출력

@@ -843,50 +843,79 @@ router.get(
     page.drawText(`검사일: ${testDate}`, { x: margin, y, size: 11, font });
     y -= 30;
 
-    // 검사 결과 테이블 (가운데 정렬)
+    // 검사 결과 테이블 (가운데 정렬) - 여러 페이지 지원
     const colWidths = [130, 70, 50, 90, 60];
     const tableWidth = colWidths.reduce((a, b) => a + b, 0);
     const headers = ['검사항목', '결과', '단위', '참고범위', '판정'];
     const tableX = (width - tableWidth) / 2;
+    const rowHeight = 18;
+    const headerHeight = 22;
+    const minYForTable = 180; // 페이지 하단 여백
+
+    let currentPage = page;
     let tableY = y;
+    let pageCount = 1;
 
-    // 테이블 헤더
-    page.drawRectangle({
-      x: tableX,
-      y: tableY - 20,
-      width: colWidths.reduce((a, b) => a + b, 0),
-      height: 20,
-      color: rgb(0.9, 0.9, 0.9),
-    });
-
-    let colX = tableX;
-    for (let i = 0; i < headers.length; i++) {
-      page.drawText(headers[i], {
-        x: colX + 5,
-        y: tableY - 15,
-        size: 9,
-        font: boldFont,
+    // 헬퍼: 테이블 헤더 그리기
+    const drawTableHeader = (pg: typeof page, startY: number) => {
+      pg.drawRectangle({
+        x: tableX,
+        y: startY - 20,
+        width: tableWidth,
+        height: 20,
+        color: rgb(0.9, 0.9, 0.9),
       });
-      colX += colWidths[i];
-    }
-    tableY -= 22;
 
-    // 테이블 데이터
-    for (const result of analysis.labResults) {
-      if (tableY < 150) {
-        // 페이지 넘김 필요시 중단 (간단히 처리)
-        break;
+      let colX = tableX;
+      for (let i = 0; i < headers.length; i++) {
+        pg.drawText(headers[i], {
+          x: colX + 5,
+          y: startY - 15,
+          size: 9,
+          font: boldFont,
+        });
+        colX += colWidths[i];
+      }
+      return startY - headerHeight;
+    };
+
+    // 첫 페이지 테이블 헤더
+    tableY = drawTableHeader(currentPage, tableY);
+
+    // 테이블 데이터 - 모든 결과 출력
+    for (let idx = 0; idx < analysis.labResults.length; idx++) {
+      const result = analysis.labResults[idx];
+
+      // 페이지 넘김 체크
+      if (tableY < minYForTable) {
+        // 새 페이지 추가
+        currentPage = pdfDoc.addPage([595, 842]);
+        pageCount++;
+        tableY = height - margin;
+
+        // 새 페이지 헤더
+        currentPage.drawText(`${headerTitle} - ${subTitle} (${pageCount}페이지)`, {
+          x: margin,
+          y: tableY,
+          size: 12,
+          font: boldFont,
+          color: rgb(0.4, 0.4, 0.4),
+        });
+        tableY -= 30;
+
+        // 테이블 헤더 다시 그리기
+        tableY = drawTableHeader(currentPage, tableY);
       }
 
-      colX = tableX;
+      let colX = tableX;
       const flagColor = getFlagColor(result.flag);
 
       // 행 배경 (이상수치인 경우)
       if (result.flag !== 'NORMAL') {
-        page.drawRectangle({
+        currentPage.drawRectangle({
           x: tableX,
           y: tableY - 15,
-          width: colWidths.reduce((a, b) => a + b, 0),
+          width: tableWidth,
           height: 16,
           color: rgb(1, 0.95, 0.9),
         });
@@ -894,7 +923,7 @@ router.get(
 
       // 항목명 (null 안전 처리 + PDF 정제)
       const testItemName = sanitizeForPdf(result.analyte || result.testName) || 'Unknown';
-      page.drawText(truncateText(testItemName, 18), {
+      currentPage.drawText(truncateText(testItemName, 18), {
         x: colX + 5,
         y: tableY - 12,
         size: 9,
@@ -904,7 +933,7 @@ router.get(
 
       // 결과 (Decimal to String 안전 변환)
       const valueStr = result.value != null ? String(result.value) : '-';
-      page.drawText(valueStr, {
+      currentPage.drawText(valueStr, {
         x: colX + 5,
         y: tableY - 12,
         size: 9,
@@ -914,7 +943,7 @@ router.get(
       colX += colWidths[1];
 
       // 단위
-      page.drawText(sanitizeForPdf(result.unit) || '', {
+      currentPage.drawText(sanitizeForPdf(result.unit) || '', {
         x: colX + 5,
         y: tableY - 12,
         size: 9,
@@ -926,7 +955,7 @@ router.get(
       const refRange = result.refLow != null && result.refHigh != null
         ? `${String(result.refLow)} - ${String(result.refHigh)}`
         : '-';
-      page.drawText(refRange, {
+      currentPage.drawText(refRange, {
         x: colX + 5,
         y: tableY - 12,
         size: 9,
@@ -935,7 +964,7 @@ router.get(
       colX += colWidths[3];
 
       // 판정
-      page.drawText(result.flag, {
+      currentPage.drawText(result.flag, {
         x: colX + 5,
         y: tableY - 12,
         size: 9,
@@ -943,16 +972,36 @@ router.get(
         color: flagColor,
       });
 
-      tableY -= 18;
+      tableY -= rowHeight;
     }
 
     y = tableY - 20;
 
-    // AI 소견
+    // AI 소견 - 반드시 출력 (공간 부족 시 새 페이지)
     const rawComment = analysis.doctorComment || analysis.aiComment;
     const comment = sanitizeForPdf(rawComment);
-    if (comment && y > 150) {
-      page.drawLine({
+
+    if (comment) {
+      const commentLines = wrapText(comment, 80);
+      const commentHeight = commentLines.length * 14 + 40; // 제목 + 여백 포함
+
+      // 공간 부족 시 새 페이지
+      if (y < commentHeight + 100) {
+        currentPage = pdfDoc.addPage([595, 842]);
+        pageCount++;
+        y = height - margin;
+
+        currentPage.drawText(`${headerTitle} - AI 분석 소견`, {
+          x: margin,
+          y,
+          size: 12,
+          font: boldFont,
+          color: rgb(0.4, 0.4, 0.4),
+        });
+        y -= 30;
+      }
+
+      currentPage.drawLine({
         start: { x: margin, y },
         end: { x: width - margin, y },
         thickness: 0.5,
@@ -960,7 +1009,7 @@ router.get(
       });
       y -= 20;
 
-      page.drawText('AI 분석 소견:', {
+      currentPage.drawText('AI 분석 소견:', {
         x: margin,
         y,
         size: 11,
@@ -969,11 +1018,15 @@ router.get(
       });
       y -= 18;
 
-      // 코멘트 줄바꿈 처리
-      const lines = wrapText(comment, 80);
-      for (const line of lines) {
-        if (y < 100) break;
-        page.drawText(line, {
+      // 코멘트 줄바꿈 처리 - 전체 출력
+      for (const line of commentLines) {
+        if (y < 100) {
+          // 새 페이지 추가
+          currentPage = pdfDoc.addPage([595, 842]);
+          pageCount++;
+          y = height - margin;
+        }
+        currentPage.drawText(line, {
           x: margin,
           y,
           size: 10,
@@ -984,9 +1037,15 @@ router.get(
       }
     }
 
-    // 승인 정보 (하단)
-    y = 80;
-    page.drawLine({
+    // 승인 정보 (마지막 페이지 하단)
+    // 공간이 부족하면 새 페이지 추가
+    if (y < 120) {
+      currentPage = pdfDoc.addPage([595, 842]);
+      y = height - margin;
+    }
+
+    y = Math.min(y, 100);
+    currentPage.drawLine({
       start: { x: margin, y: y + 10 },
       end: { x: width - margin, y: y + 10 },
       thickness: 0.5,
@@ -997,14 +1056,14 @@ router.get(
       const approvalDate = formatDateTimeForPdf(analysis.approvedAt);
       const approverName = sanitizeForPdf(analysis.approvedBy.name) || 'Doctor';
 
-      page.drawText(`승인일시: ${approvalDate}`, {
+      currentPage.drawText(`승인일시: ${approvalDate}`, {
         x: margin,
         y,
         size: 9,
         font,
         color: rgb(0.5, 0.5, 0.5),
       });
-      page.drawText(`승인의사: ${approverName}`, {
+      currentPage.drawText(`승인의사: ${approverName}`, {
         x: margin,
         y: y - 14,
         size: 9,
@@ -1017,7 +1076,7 @@ router.get(
       const stampX = width - margin - stampSize;
       const stampY = y - 20;
 
-      page.drawCircle({
+      currentPage.drawCircle({
         x: stampX + stampSize / 2,
         y: stampY + stampSize / 2,
         size: stampSize / 2,
@@ -1025,7 +1084,7 @@ router.get(
         borderWidth: 2,
       });
 
-      page.drawText('승인', {
+      currentPage.drawText('승인', {
         x: stampX + 18,
         y: stampY + stampSize / 2 + 5,
         size: 10,
@@ -1034,7 +1093,7 @@ router.get(
       });
 
       const stampDate = formatDateForPdf(analysis.approvedAt);
-      page.drawText(stampDate, {
+      currentPage.drawText(stampDate, {
         x: stampX + 10,
         y: stampY + stampSize / 2 - 8,
         size: 7,
@@ -1042,7 +1101,7 @@ router.get(
         color: rgb(0.8, 0.1, 0.1),
       });
 
-      page.drawText(approverName, {
+      currentPage.drawText(approverName, {
         x: stampX + 15,
         y: stampY + stampSize / 2 - 20,
         size: 8,

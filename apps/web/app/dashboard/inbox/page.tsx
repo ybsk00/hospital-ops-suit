@@ -172,6 +172,8 @@ export default function InboxPage() {
 
   // PDF modal
   const [selectedItem, setSelectedItem] = useState<InboxItem | null>(null);
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
 
   // Bulk download state
   const [bulkDownloading, setBulkDownloading] = useState(false);
@@ -299,8 +301,47 @@ export default function InboxPage() {
     fetchDateItems(date);
   }
 
+  // PDF blob URL 로드 (CORS 우회)
+  async function loadPdfBlob(entityId: string) {
+    if (!accessToken) return;
+    setPdfLoading(true);
+    setPdfBlobUrl(null);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/lab-uploads/analyses/${entityId}/export-pdf?token=${accessToken}`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('PDF 로드 실패');
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      setPdfBlobUrl(url);
+    } catch (err) {
+      console.error('PDF load error:', err);
+    } finally {
+      setPdfLoading(false);
+    }
+  }
+
+  // 모달 닫을 때 blob URL 정리
+  function closePdfModal() {
+    if (pdfBlobUrl) {
+      URL.revokeObjectURL(pdfBlobUrl);
+    }
+    setPdfBlobUrl(null);
+    setSelectedItem(null);
+  }
+
   function handleItemClick(item: InboxItem) {
     setSelectedItem(item);
+    if (item.entityType === 'LabAnalysis' && item.entityId) {
+      loadPdfBlob(item.entityId);
+    }
   }
 
   async function handleStatusChange(item: InboxItem, newStatus: string) {
@@ -803,7 +844,7 @@ export default function InboxPage() {
                 </div>
               </div>
               <button
-                onClick={() => setSelectedItem(null)}
+                onClick={closePdfModal}
                 className="p-2 hover:bg-slate-100 rounded-lg transition"
               >
                 <X size={20} />
@@ -839,11 +880,24 @@ export default function InboxPage() {
             {/* PDF Preview Area */}
             <div className="flex-1 overflow-hidden p-6">
               <div className="bg-slate-100 rounded-lg h-full">
-                <iframe
-                  src={`${API_BASE}/api/lab-uploads/analyses/${selectedItem.entityId}/export-pdf?token=${accessToken}`}
-                  className="w-full h-[400px] rounded-lg border border-slate-200"
-                  title="PDF Preview"
-                />
+                {pdfLoading ? (
+                  <div className="flex items-center justify-center h-[400px]">
+                    <div className="text-center">
+                      <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto mb-3"></div>
+                      <p className="text-slate-500">PDF 로딩 중...</p>
+                    </div>
+                  </div>
+                ) : pdfBlobUrl ? (
+                  <iframe
+                    src={pdfBlobUrl}
+                    className="w-full h-[400px] rounded-lg border border-slate-200"
+                    title="PDF Preview"
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-[400px]">
+                    <p className="text-slate-500">PDF를 불러올 수 없습니다.</p>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -864,8 +918,16 @@ export default function InboxPage() {
             {/* Action Buttons */}
             <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200">
               <button
-                onClick={() => handlePrintPdf(selectedItem.entityId!)}
-                className="flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition"
+                onClick={() => {
+                  if (pdfBlobUrl) {
+                    const printWindow = window.open(pdfBlobUrl, '_blank');
+                    if (printWindow) {
+                      printWindow.onload = () => printWindow.print();
+                    }
+                  }
+                }}
+                disabled={!pdfBlobUrl}
+                className="flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition disabled:opacity-50"
               >
                 <Printer size={16} />
                 출력

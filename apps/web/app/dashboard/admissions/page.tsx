@@ -196,12 +196,17 @@ export default function AdmissionsPage() {
         api<Doctor[]>('/api/admissions/doctors', { token: accessToken }),
       ]);
       const beds = bedsRes.data || [];
+      console.log('Available beds:', beds); // 디버깅용
       setAvailableBeds(beds);
       setDoctors(doctorsRes.data || []);
 
       // Group beds by ward and room
       const wardMap = new Map<string, WardGroup>();
       for (const bed of beds) {
+        if (!bed.room || !bed.room.ward) {
+          console.warn('Invalid bed structure:', bed);
+          continue;
+        }
         const wardId = bed.room.ward.id;
         const wardName = bed.room.ward.name;
         const roomId = bed.room.id;
@@ -229,9 +234,10 @@ export default function AdmissionsPage() {
           room.beds.sort((a, b) => a.label.localeCompare(b.label));
         }
       }
+      console.log('Ward groups:', groups); // 디버깅용
       setWardGroups(groups);
-    } catch {
-      // handle
+    } catch (err) {
+      console.error('fetchDropdowns error:', err);
     }
   };
 
