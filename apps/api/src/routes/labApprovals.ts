@@ -12,6 +12,123 @@ import ExcelJS from 'exceljs';
 const router = Router();
 
 // ============================================================
+// GET /api/lab-approvals/calendar - 달력 데이터 (월별 승인 현황)
+// ============================================================
+
+router.get(
+  '/calendar',
+  requireAuth,
+  requirePermission('LAB_APPROVALS', 'READ'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const year = parseInt(req.query.year as string) || new Date().getFullYear();
+    const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
+
+    // 해당 월의 시작/끝 날짜
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0, 23, 59, 59, 999);
+
+    // LabAnalysis에서 승인된 건 날짜별 집계
+    const analyses = await prisma.labAnalysis.findMany({
+      where: {
+        status: 'APPROVED',
+        approvedAt: {
+          gte: startDate,
+          lte: endDate,
+        },
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        approvedAt: true,
+        patientName: true,
+      },
+    });
+
+    // 날짜별로 그룹핑
+    const dateMap = new Map<string, number>();
+    for (const analysis of analyses) {
+      if (analysis.approvedAt) {
+        const dateStr = analysis.approvedAt.toISOString().slice(0, 10);
+        dateMap.set(dateStr, (dateMap.get(dateStr) || 0) + 1);
+      }
+    }
+
+    const calendarData = Array.from(dateMap.entries()).map(([date, count]) => ({
+      date,
+      count,
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        year,
+        month,
+        days: calendarData,
+      },
+    });
+  }),
+);
+
+// ============================================================
+// GET /api/lab-approvals/by-date/:date - 특정 날짜 승인된 환자 목록
+// ============================================================
+
+router.get(
+  '/by-date/:date',
+  requireAuth,
+  requirePermission('LAB_APPROVALS', 'READ'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const dateStr = req.params.date;
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) {
+      throw new AppError(400, 'INVALID_DATE', '유효하지 않은 날짜입니다.');
+    }
+
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const analyses = await prisma.labAnalysis.findMany({
+      where: {
+        status: 'APPROVED',
+        approvedAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+        deletedAt: null,
+      },
+      include: {
+        patient: { select: { id: true, name: true, emrPatientId: true } },
+        approvedBy: { select: { id: true, name: true } },
+      },
+      orderBy: { approvedAt: 'desc' },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        date: dateStr,
+        count: analyses.length,
+        analyses: analyses.map((a) => ({
+          id: a.id,
+          patientName: a.patientName,
+          emrPatientId: a.emrPatientId,
+          patient: a.patient,
+          abnormalCount: a.abnormalCount,
+          normalCount: a.normalCount,
+          priority: a.priority,
+          stamp: a.stamp,
+          aiComment: a.aiComment,
+          approvedBy: a.approvedBy,
+          approvedAt: a.approvedAt,
+        })),
+      },
+    });
+  }),
+);
+
+// ============================================================
 // GET /api/lab-approvals - 승인 목록 조회
 // ============================================================
 

@@ -1,81 +1,55 @@
 'use client';
 
-import { useState, useEffect, useCallback, Fragment } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuthStore } from '../../../stores/auth';
 import { api } from '../../../lib/api';
 import {
   RefreshCw,
-  ChevronDown,
-  ChevronUp,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  Loader2,
-  AlertTriangle,
-  Users,
-  FileText,
+  ChevronLeft,
+  ChevronRight,
+  Calendar,
   Download,
-  FileSpreadsheet,
-  Stamp,
-  Filter,
+  X,
+  User,
+  FileText,
+  Printer,
+  CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
 
-interface PatientSummary {
-  totalPatients: number;
-  abnormalPatients: number;
-  normalPatients: number;
-  totalFiles: number;
+interface CalendarDay {
+  date: string;
+  count: number;
 }
 
-interface ApprovalItem {
-  id: string;
-  uploadDate: string;
-  patientSummary: PatientSummary;
-  status: string;
-  approvedBy: { id: string; name: string } | null;
-  approvedAt: string | null;
-  stampedAt: string | null;
-  version: number;
+interface CalendarResponse {
+  year: number;
+  month: number;
+  days: CalendarDay[];
 }
 
-interface LabResult {
-  id: string;
-  testName: string;
-  analyte: string;
-  value: number;
-  unit: string | null;
-  refLow: number | null;
-  refHigh: number | null;
-  flag: string;
-}
-
-interface Analysis {
+interface AnalysisItem {
   id: string;
   patientName: string;
   emrPatientId: string | null;
   patient: { id: string; name: string; emrPatientId: string } | null;
   abnormalCount: number;
   normalCount: number;
+  priority: string;
+  stamp: string | null;
   aiComment: string | null;
-  labResults: LabResult[];
+  approvedBy: { id: string; name: string } | null;
+  approvedAt: string | null;
 }
 
-interface ApprovalDetail extends ApprovalItem {
-  aiSummary: string | null;
-  rejectionNote: string | null;
-  analyses: Analysis[];
-}
-
-interface ListResponse {
-  items: ApprovalItem[];
-  total: number;
-  page: number;
-  limit: number;
+interface DateResponse {
+  date: string;
+  count: number;
+  analyses: AnalysisItem[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -84,278 +58,199 @@ interface ListResponse {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
-const STATUS_LABELS: Record<string, string> = {
-  PENDING: '승인대기',
-  APPROVED: '승인완료',
-  REJECTED: '반려',
+const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
+
+const PRIORITY_COLORS: Record<string, string> = {
+  EMERGENCY: 'bg-red-100 text-red-700 border-red-300',
+  URGENT: 'bg-orange-100 text-orange-700 border-orange-300',
+  RECHECK: 'bg-yellow-100 text-yellow-700 border-yellow-300',
+  CAUTION: 'bg-green-100 text-green-700 border-green-300',
+  NORMAL: 'bg-slate-100 text-slate-700 border-slate-300',
 };
 
-const STATUS_COLORS: Record<string, string> = {
-  PENDING: 'bg-yellow-100 text-yellow-700',
-  APPROVED: 'bg-green-100 text-green-700',
-  REJECTED: 'bg-red-100 text-red-700',
-};
-
-const FLAG_LABELS: Record<string, string> = {
+const PRIORITY_LABELS: Record<string, string> = {
+  EMERGENCY: '응급실 방문',
+  URGENT: '병원내원요망',
+  RECHECK: '재검사요망',
+  CAUTION: '건강유의',
   NORMAL: '정상',
-  HIGH: '높음',
-  LOW: '낮음',
-  CRITICAL: '위험',
 };
-
-const FLAG_COLORS: Record<string, string> = {
-  NORMAL: 'bg-green-100 text-green-700',
-  HIGH: 'bg-orange-100 text-orange-700',
-  LOW: 'bg-blue-100 text-blue-700',
-  CRITICAL: 'bg-red-100 text-red-700',
-};
-
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
-/* ------------------------------------------------------------------ */
-
-function formatDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString('ko-KR', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    weekday: 'short',
-  });
-}
-
-function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString('ko-KR', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
 
 /* ------------------------------------------------------------------ */
 /*  Page Component                                                     */
 /* ------------------------------------------------------------------ */
 
 export default function LabApprovalsPage() {
-  const { accessToken, user } = useAuthStore();
-  const searchParams = useSearchParams();
-  const router = useRouter();
+  const { accessToken } = useAuthStore();
 
-  // Check if user has APPROVE permission (doctor)
-  const canApprove = user?.isSuperAdmin || user?.departments?.some((d: any) =>
-    d.permissions?.some((p: any) => p.resource === 'LAB_APPROVALS' && p.actions?.includes('APPROVE'))
-  );
-
-  // List state
-  const [items, setItems] = useState<ApprovalItem[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  // Calendar state
+  const [year, setYear] = useState(() => new Date().getFullYear());
+  const [month, setMonth] = useState(() => new Date().getMonth() + 1);
+  const [calendarData, setCalendarData] = useState<CalendarDay[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Filter
-  const [statusFilter, setStatusFilter] = useState<string>('');
+  // View mode
+  const [viewMode, setViewMode] = useState<'month' | 'week' | 'day'>('month');
 
-  // Expanded row
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<ApprovalDetail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
+  // Selected date modal
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [dateAnalyses, setDateAnalyses] = useState<AnalysisItem[]>([]);
+  const [dateLoading, setDateLoading] = useState(false);
 
-  // Action states
-  const [approving, setApproving] = useState(false);
-  const [rejecting, setRejecting] = useState(false);
-  const [rejectionNote, setRejectionNote] = useState('');
-  const [showRejectModal, setShowRejectModal] = useState(false);
+  // PDF modal
+  const [selectedAnalysis, setSelectedAnalysis] = useState<AnalysisItem | null>(null);
 
-  // Create from date (for incoming from lab-uploads page)
-  const dateParam = searchParams.get('date');
-  const [creating, setCreating] = useState(false);
+  /* ---------- Fetch calendar data --------------------------------- */
 
-  /* ---------- Create approval from date (if param exists) ---------- */
-
-  useEffect(() => {
-    async function createFromDate() {
-      if (!dateParam || !accessToken) return;
-
-      setCreating(true);
-      try {
-        const res = await api<{ id: string }>('/api/lab-approvals/create-from-date', {
-          method: 'POST',
-          body: { date: dateParam },
-          token: accessToken,
-        });
-
-        // 성공 시 목록 새로고침하고 URL에서 date 파라미터 제거
-        router.replace('/dashboard/lab-approvals');
-        fetchList();
-
-        // 생성된 항목 자동 확장
-        if (res.data?.id) {
-          setExpandedId(res.data.id);
-          fetchDetail(res.data.id);
-        }
-      } catch (err: any) {
-        if (err.message?.includes('ALREADY_EXISTS')) {
-          // 이미 존재하면 그냥 목록 보여주기
-          router.replace('/dashboard/lab-approvals');
-        } else {
-          alert(err.message || '승인 객체 생성 실패');
-          router.replace('/dashboard/lab-approvals');
-        }
-      } finally {
-        setCreating(false);
-      }
-    }
-
-    createFromDate();
-  }, [dateParam, accessToken]);
-
-  /* ---------- Fetch list ------------------------------------------ */
-
-  const fetchList = useCallback(async () => {
+  const fetchCalendar = useCallback(async () => {
     if (!accessToken) return;
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set('page', String(page));
-      if (statusFilter) params.set('status', statusFilter);
-
-      const res = await api<ListResponse>(`/api/lab-approvals?${params.toString()}`, {
+      const res = await api<CalendarResponse>(`/api/lab-approvals/calendar?year=${year}&month=${month}`, {
         token: accessToken,
       });
-      setItems(res.data!.items);
-      setTotal(res.data!.total);
-    } catch {
-      // handle error silently
+      setCalendarData(res.data?.days || []);
+    } catch (err) {
+      console.error('Calendar fetch error:', err);
     } finally {
       setLoading(false);
     }
-  }, [accessToken, page, statusFilter]);
+  }, [accessToken, year, month]);
 
   useEffect(() => {
-    if (!dateParam) {
-      fetchList();
+    fetchCalendar();
+  }, [fetchCalendar]);
+
+  /* ---------- Fetch date analyses --------------------------------- */
+
+  const fetchDateAnalyses = useCallback(async (date: string) => {
+    if (!accessToken) return;
+    setDateLoading(true);
+    try {
+      const res = await api<DateResponse>(`/api/lab-approvals/by-date/${date}`, {
+        token: accessToken,
+      });
+      setDateAnalyses(res.data?.analyses || []);
+    } catch (err) {
+      console.error('Date analyses fetch error:', err);
+    } finally {
+      setDateLoading(false);
     }
-  }, [fetchList, dateParam]);
+  }, [accessToken]);
 
-  /* ---------- Fetch detail ---------------------------------------- */
+  /* ---------- Calendar helpers ------------------------------------ */
 
-  const fetchDetail = useCallback(
-    async (id: string) => {
-      if (!accessToken) return;
-      setDetailLoading(true);
-      setDetail(null);
-      try {
-        const res = await api<ApprovalDetail>(`/api/lab-approvals/${id}`, {
-          token: accessToken,
-        });
-        setDetail(res.data!);
-      } catch {
-        // handle error silently
-      } finally {
-        setDetailLoading(false);
-      }
-    },
-    [accessToken],
-  );
+  function getDaysInMonth(y: number, m: number): number {
+    return new Date(y, m, 0).getDate();
+  }
 
-  function handleToggleRow(id: string) {
-    if (expandedId === id) {
-      setExpandedId(null);
-      setDetail(null);
+  function getFirstDayOfMonth(y: number, m: number): number {
+    return new Date(y, m - 1, 1).getDay();
+  }
+
+  function generateCalendarDays() {
+    const daysInMonth = getDaysInMonth(year, month);
+    const firstDay = getFirstDayOfMonth(year, month);
+    const days: Array<{ day: number; date: string; count: number } | null> = [];
+
+    // Empty slots for previous month
+    for (let i = 0; i < firstDay; i++) {
+      days.push(null);
+    }
+
+    // Days in current month
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const dayData = calendarData.find((c) => c.date === dateStr);
+      days.push({
+        day: d,
+        date: dateStr,
+        count: dayData?.count || 0,
+      });
+    }
+
+    return days;
+  }
+
+  function handlePrevMonth() {
+    if (month === 1) {
+      setYear(year - 1);
+      setMonth(12);
     } else {
-      setExpandedId(id);
-      fetchDetail(id);
+      setMonth(month - 1);
     }
   }
 
-  /* ---------- Approve --------------------------------------------- */
-
-  async function handleApprove() {
-    if (!accessToken || !detail) return;
-
-    setApproving(true);
-    try {
-      await api(`/api/lab-approvals/${detail.id}/approve`, {
-        method: 'PATCH',
-        body: { version: detail.version },
-        token: accessToken,
-      });
-
-      fetchList();
-      fetchDetail(detail.id);
-    } catch (err: any) {
-      alert(err.message || '승인 실패');
-    } finally {
-      setApproving(false);
+  function handleNextMonth() {
+    if (month === 12) {
+      setYear(year + 1);
+      setMonth(1);
+    } else {
+      setMonth(month + 1);
     }
   }
 
-  /* ---------- Reject ---------------------------------------------- */
-
-  async function handleReject() {
-    if (!accessToken || !detail) return;
-
-    setRejecting(true);
-    try {
-      await api(`/api/lab-approvals/${detail.id}/reject`, {
-        method: 'PATCH',
-        body: { version: detail.version, rejectionNote },
-        token: accessToken,
-      });
-
-      setShowRejectModal(false);
-      setRejectionNote('');
-      fetchList();
-      fetchDetail(detail.id);
-    } catch (err: any) {
-      alert(err.message || '반려 실패');
-    } finally {
-      setRejecting(false);
-    }
+  function handleDateClick(date: string, count: number) {
+    if (count === 0) return;
+    setSelectedDate(date);
+    fetchDateAnalyses(date);
   }
 
-  /* ---------- Export ---------------------------------------------- */
+  function handlePatientClick(analysis: AnalysisItem) {
+    setSelectedAnalysis(analysis);
+  }
 
-  async function handleExportPdf(id: string) {
+  function handleDownloadPdf(analysisId: string) {
     if (!accessToken) return;
-    window.open(`${API_BASE}/api/lab-approvals/${id}/export-pdf?token=${accessToken}`, '_blank');
+    window.open(`${API_BASE}/api/lab-uploads/analyses/${analysisId}/export-pdf?token=${accessToken}`, '_blank');
   }
 
-  async function handleExportExcel(id: string) {
+  function handlePrintPdf(analysisId: string) {
     if (!accessToken) return;
-    window.open(`${API_BASE}/api/lab-approvals/${id}/export-excel?token=${accessToken}`, '_blank');
+    const pdfUrl = `${API_BASE}/api/lab-uploads/analyses/${analysisId}/export-pdf?token=${accessToken}`;
+    const printWindow = window.open(pdfUrl, '_blank');
+    if (printWindow) {
+      printWindow.onload = () => {
+        printWindow.print();
+      };
+    }
+  }
+
+  function formatDate(dateStr: string): string {
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('ko-KR', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      weekday: 'short',
+    });
+  }
+
+  function formatDateTime(iso: string): string {
+    const d = new Date(iso);
+    return d.toLocaleString('ko-KR', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   }
 
   /* ---------- Render ---------------------------------------------- */
 
-  if (creating) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <Loader2 size={48} className="animate-spin text-blue-600 mx-auto mb-4" />
-          <p className="text-slate-600">승인 정보를 생성 중입니다...</p>
-        </div>
-      </div>
-    );
-  }
+  const calendarDays = generateCalendarDays();
+  const today = new Date().toISOString().slice(0, 10);
 
   return (
     <div>
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">검사결과 승인</h1>
-          <p className="text-slate-500 mt-1">
-            {canApprove
-              ? 'AI 분석된 검사결과를 검토하고 승인합니다.'
-              : '승인된 검사결과를 조회합니다.'}
-          </p>
+          <h1 className="text-2xl font-bold text-slate-900">검사결과 승인 현황</h1>
+          <p className="text-slate-500 mt-1">승인된 검사결과를 달력으로 확인합니다.</p>
         </div>
         <button
-          onClick={fetchList}
+          onClick={fetchCalendar}
           className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition text-sm"
         >
           <RefreshCw size={16} />
@@ -363,361 +258,263 @@ export default function LabApprovalsPage() {
         </button>
       </div>
 
-      {/* Filter */}
-      {canApprove && (
-        <div className="bg-white rounded-xl border border-slate-200 p-4 mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <Filter size={16} className="text-slate-400" />
-            <span className="text-sm font-medium text-slate-700">필터</span>
+      {/* View Mode Tabs */}
+      <div className="bg-white rounded-xl border border-slate-200 mb-6">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+          <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+            {(['day', 'week', 'month'] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setViewMode(mode)}
+                className={`px-4 py-1.5 text-sm font-medium rounded-md transition ${
+                  viewMode === mode
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {mode === 'day' ? '일별' : mode === 'week' ? '주별' : '월별'}
+              </button>
+            ))}
           </div>
-          <div>
-            <label className="block text-xs text-slate-500 mb-1">상태</label>
-            <select
-              value={statusFilter}
-              onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-              className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+
+          {/* Month Navigation */}
+          <div className="flex items-center gap-4">
+            <button
+              onClick={handlePrevMonth}
+              className="p-2 hover:bg-slate-100 rounded-lg transition"
             >
-              <option value="">전체</option>
-              <option value="PENDING">승인대기</option>
-              <option value="APPROVED">승인완료</option>
-              <option value="REJECTED">반려</option>
-            </select>
+              <ChevronLeft size={20} />
+            </button>
+            <div className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+              <Calendar size={20} className="text-slate-400" />
+              {year}년 {month}월
+            </div>
+            <button
+              onClick={handleNextMonth}
+              className="p-2 hover:bg-slate-100 rounded-lg transition"
+            >
+              <ChevronRight size={20} />
+            </button>
+          </div>
+        </div>
+
+        {/* Calendar Grid */}
+        <div className="p-4">
+          {loading ? (
+            <div className="text-center py-12 text-slate-400">로딩 중...</div>
+          ) : (
+            <>
+              {/* Weekday Headers */}
+              <div className="grid grid-cols-7 gap-1 mb-2">
+                {WEEKDAYS.map((day, idx) => (
+                  <div
+                    key={day}
+                    className={`text-center text-sm font-medium py-2 ${
+                      idx === 0 ? 'text-red-500' : idx === 6 ? 'text-blue-500' : 'text-slate-600'
+                    }`}
+                  >
+                    {day}
+                  </div>
+                ))}
+              </div>
+
+              {/* Day Cells */}
+              <div className="grid grid-cols-7 gap-1">
+                {calendarDays.map((dayData, idx) => {
+                  if (!dayData) {
+                    return <div key={`empty-${idx}`} className="min-h-24" />;
+                  }
+
+                  const isToday = dayData.date === today;
+                  const hasData = dayData.count > 0;
+                  const dayOfWeek = (getFirstDayOfMonth(year, month) + dayData.day - 1) % 7;
+
+                  return (
+                    <div
+                      key={dayData.date}
+                      onClick={() => handleDateClick(dayData.date, dayData.count)}
+                      className={`min-h-24 border rounded-lg p-2 transition ${
+                        hasData
+                          ? 'cursor-pointer hover:bg-green-50 hover:border-green-300'
+                          : 'bg-slate-50/50'
+                      } ${isToday ? 'ring-2 ring-blue-500 ring-offset-1' : 'border-slate-200'}`}
+                    >
+                      <div className="flex items-start justify-between">
+                        <span
+                          className={`text-sm font-medium ${
+                            dayOfWeek === 0
+                              ? 'text-red-500'
+                              : dayOfWeek === 6
+                              ? 'text-blue-500'
+                              : 'text-slate-700'
+                          } ${isToday ? 'bg-blue-500 text-white w-6 h-6 rounded-full flex items-center justify-center' : ''}`}
+                        >
+                          {dayData.day}
+                        </span>
+                      </div>
+
+                      {hasData && (
+                        <div className="mt-2">
+                          <div className="bg-green-100 text-green-700 rounded px-2 py-1 text-xs font-medium text-center">
+                            {dayData.count}건
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Date Modal - Patient List */}
+      {selectedDate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">{formatDate(selectedDate)}</h3>
+                <p className="text-sm text-slate-500">승인된 검사결과 {dateAnalyses.length}건</p>
+              </div>
+              <button
+                onClick={() => { setSelectedDate(null); setDateAnalyses([]); }}
+                className="p-2 hover:bg-slate-100 rounded-lg transition"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4">
+              {dateLoading ? (
+                <div className="text-center py-8 text-slate-400">로딩 중...</div>
+              ) : dateAnalyses.length === 0 ? (
+                <div className="text-center py-8 text-slate-400">승인된 검사결과가 없습니다.</div>
+              ) : (
+                <div className="space-y-2">
+                  {dateAnalyses.map((analysis) => (
+                    <div
+                      key={analysis.id}
+                      onClick={() => handlePatientClick(analysis)}
+                      className="flex items-center justify-between p-4 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 transition"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center">
+                          <User size={20} className="text-slate-400" />
+                        </div>
+                        <div>
+                          <div className="font-medium text-slate-900">
+                            {analysis.patientName || '환자'}
+                          </div>
+                          <div className="text-sm text-slate-500">
+                            {analysis.emrPatientId || analysis.patient?.emrPatientId || '-'}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {analysis.priority && analysis.priority !== 'NORMAL' && (
+                          <span className={`px-2 py-1 text-xs font-medium rounded border ${PRIORITY_COLORS[analysis.priority] || ''}`}>
+                            {PRIORITY_LABELS[analysis.priority] || analysis.priority}
+                          </span>
+                        )}
+                        <div className="text-xs text-slate-500">
+                          {analysis.approvedBy?.name}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* List */}
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-200 bg-slate-50">
-          <h3 className="font-medium text-slate-700">
-            {canApprove ? '검사결과 승인 목록' : '승인된 검사결과'}
-          </h3>
-        </div>
-
-        {loading ? (
-          <div className="text-center py-12 text-slate-400">로딩 중...</div>
-        ) : items.length === 0 ? (
-          <div className="text-center py-12">
-            <FileText size={48} className="mx-auto text-slate-300 mb-4" />
-            <p className="text-slate-500">
-              {canApprove ? '승인 대기 중인 검사결과가 없습니다.' : '승인된 검사결과가 없습니다.'}
-            </p>
-          </div>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {items.map((item) => {
-              const isExpanded = expandedId === item.id;
-
-              return (
-                <Fragment key={item.id}>
-                  <div
-                    className="px-4 py-4 hover:bg-slate-50 cursor-pointer transition"
-                    onClick={() => handleToggleRow(item.id)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="text-slate-400">
-                          {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-                        </div>
-
-                        <div>
-                          <div className="font-medium text-slate-900">{formatDate(item.uploadDate)}</div>
-                          <div className="text-sm text-slate-500 mt-0.5">
-                            총 {item.patientSummary.totalPatients}명 환자 / 이상소견 {item.patientSummary.abnormalPatients}명
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        {/* Status Badge */}
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_COLORS[item.status] || ''}`}>
-                          {item.status === 'APPROVED' && <CheckCircle2 size={12} />}
-                          {item.status === 'PENDING' && <Clock size={12} />}
-                          {item.status === 'REJECTED' && <XCircle size={12} />}
-                          {STATUS_LABELS[item.status] || item.status}
-                        </span>
-
-                        {/* Stamp indicator */}
-                        {item.stampedAt && (
-                          <div className="relative">
-                            <div className="w-12 h-12 rounded-full border-2 border-red-500 flex items-center justify-center text-red-500 font-bold text-xs transform -rotate-12">
-                              <Stamp size={16} />
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Export buttons (for approved) */}
-                        {item.status === 'APPROVED' && (
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleExportPdf(item.id); }}
-                              className="flex items-center gap-1 px-2 py-1 text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded transition"
-                              title="PDF 다운로드"
-                            >
-                              <Download size={14} />
-                              PDF
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleExportExcel(item.id); }}
-                              className="flex items-center gap-1 px-2 py-1 text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded transition"
-                              title="Excel 다운로드"
-                            >
-                              <FileSpreadsheet size={14} />
-                              Excel
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Expanded Detail */}
-                  {isExpanded && (
-                    <div className="px-4 py-4 bg-slate-50/50 border-t border-slate-100">
-                      {detailLoading ? (
-                        <div className="text-center py-8 text-slate-400">상세 정보 로딩 중...</div>
-                      ) : detail ? (
-                        <div className="space-y-6">
-                          {/* Summary Cards */}
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <div className="bg-white rounded-lg border border-slate-200 p-4">
-                              <div className="flex items-center gap-2 text-slate-500 text-sm mb-1">
-                                <FileText size={14} />
-                                총 파일
-                              </div>
-                              <div className="text-2xl font-bold text-slate-900">{detail.patientSummary.totalFiles}</div>
-                            </div>
-                            <div className="bg-white rounded-lg border border-slate-200 p-4">
-                              <div className="flex items-center gap-2 text-slate-500 text-sm mb-1">
-                                <Users size={14} />
-                                총 환자
-                              </div>
-                              <div className="text-2xl font-bold text-slate-900">{detail.patientSummary.totalPatients}</div>
-                            </div>
-                            <div className="bg-white rounded-lg border border-slate-200 p-4">
-                              <div className="flex items-center gap-2 text-red-500 text-sm mb-1">
-                                <AlertTriangle size={14} />
-                                이상소견
-                              </div>
-                              <div className="text-2xl font-bold text-red-600">{detail.patientSummary.abnormalPatients}</div>
-                            </div>
-                            <div className="bg-white rounded-lg border border-slate-200 p-4">
-                              <div className="flex items-center gap-2 text-green-500 text-sm mb-1">
-                                <CheckCircle2 size={14} />
-                                정상
-                              </div>
-                              <div className="text-2xl font-bold text-green-600">{detail.patientSummary.normalPatients}</div>
-                            </div>
-                          </div>
-
-                          {/* AI Summary */}
-                          {detail.aiSummary && (
-                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                              <div className="text-sm font-medium text-blue-700 mb-2">AI 종합 소견</div>
-                              <div className="text-sm text-blue-900 whitespace-pre-wrap">{detail.aiSummary}</div>
-                            </div>
-                          )}
-
-                          {/* Rejection Note */}
-                          {detail.rejectionNote && (
-                            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                              <div className="text-sm font-medium text-red-700 mb-2">반려 사유</div>
-                              <div className="text-sm text-red-900">{detail.rejectionNote}</div>
-                            </div>
-                          )}
-
-                          {/* Patient Analysis Results */}
-                          <div>
-                            <h4 className="font-medium text-slate-700 mb-3">환자별 검사결과</h4>
-                            <div className="space-y-4">
-                              {detail.analyses.map((analysis) => (
-                                <div key={analysis.id} className="bg-white rounded-lg border border-slate-200 overflow-hidden">
-                                  <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                                    <div>
-                                      <span className="font-medium text-slate-900">{analysis.patientName}</span>
-                                      {analysis.emrPatientId && (
-                                        <span className="text-slate-500 text-sm ml-2">({analysis.emrPatientId})</span>
-                                      )}
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-xs text-green-600">정상 {analysis.normalCount}</span>
-                                      <span className="text-xs text-slate-300">|</span>
-                                      <span className="text-xs text-red-600">이상 {analysis.abnormalCount}</span>
-                                    </div>
-                                  </div>
-
-                                  {/* AI Comment */}
-                                  {analysis.aiComment && (
-                                    <div className="px-4 py-2 bg-amber-50 border-b border-amber-100 text-sm text-amber-900">
-                                      <span className="font-medium">AI 소견:</span> {analysis.aiComment}
-                                    </div>
-                                  )}
-
-                                  {/* Results Table */}
-                                  <table className="w-full text-sm">
-                                    <thead>
-                                      <tr className="bg-slate-50 border-b border-slate-100">
-                                        <th className="text-left px-4 py-2 font-medium text-slate-600">항목</th>
-                                        <th className="text-left px-4 py-2 font-medium text-slate-600">분석물</th>
-                                        <th className="text-right px-4 py-2 font-medium text-slate-600">결과</th>
-                                        <th className="text-left px-4 py-2 font-medium text-slate-600">단위</th>
-                                        <th className="text-center px-4 py-2 font-medium text-slate-600">참고범위</th>
-                                        <th className="text-center px-4 py-2 font-medium text-slate-600">판정</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {analysis.labResults.map((result) => (
-                                        <tr key={result.id} className={`border-b border-slate-50 ${result.flag === 'CRITICAL' ? 'bg-red-50' : result.flag !== 'NORMAL' ? 'bg-amber-50' : ''}`}>
-                                          <td className="px-4 py-2 text-slate-700">{result.testName}</td>
-                                          <td className="px-4 py-2 text-slate-600">{result.analyte}</td>
-                                          <td className="px-4 py-2 text-right font-mono font-medium text-slate-900">{result.value}</td>
-                                          <td className="px-4 py-2 text-slate-500">{result.unit || '-'}</td>
-                                          <td className="px-4 py-2 text-center text-slate-500 text-xs">
-                                            {result.refLow !== null || result.refHigh !== null
-                                              ? `${result.refLow ?? ''} - ${result.refHigh ?? ''}`
-                                              : '-'}
-                                          </td>
-                                          <td className="px-4 py-2 text-center">
-                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${FLAG_COLORS[result.flag] || ''}`}>
-                                              {FLAG_LABELS[result.flag] || result.flag}
-                                            </span>
-                                          </td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-
-                          {/* Approval Info (if approved) */}
-                          {detail.status === 'APPROVED' && detail.approvedBy && (
-                            <div className="relative bg-green-50 border border-green-200 rounded-lg p-4">
-                              <div className="flex items-center gap-2 text-green-700 font-medium mb-2">
-                                <CheckCircle2 size={18} />
-                                승인 정보
-                              </div>
-                              <div className="text-sm text-green-600">
-                                <span className="font-medium">{detail.approvedBy.name}</span>님이
-                                {detail.approvedAt && ` ${formatDateTime(detail.approvedAt)}에`} 승인하였습니다.
-                              </div>
-
-                              {/* Stamp */}
-                              {detail.stampedAt && (
-                                <div className="absolute top-4 right-4 w-20 h-20 rounded-full border-4 border-red-500 flex flex-col items-center justify-center text-red-500 font-bold transform -rotate-12 bg-white/50">
-                                  <div className="text-xs">승인</div>
-                                  <div className="text-[10px]">{new Date(detail.stampedAt).toLocaleDateString('ko-KR')}</div>
-                                  <div className="text-[10px]">{detail.approvedBy.name}</div>
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {/* Action Buttons (for PENDING and canApprove) */}
-                          {detail.status === 'PENDING' && canApprove && (
-                            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200">
-                              <button
-                                onClick={() => setShowRejectModal(true)}
-                                disabled={rejecting}
-                                className="flex items-center gap-2 px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition disabled:opacity-50"
-                              >
-                                <XCircle size={16} />
-                                반려
-                              </button>
-                              <button
-                                onClick={handleApprove}
-                                disabled={approving}
-                                className="flex items-center gap-2 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-50"
-                              >
-                                {approving ? (
-                                  <>
-                                    <Loader2 size={16} className="animate-spin" />
-                                    처리중...
-                                  </>
-                                ) : (
-                                  <>
-                                    <Stamp size={16} />
-                                    승인 (스탬프)
-                                  </>
-                                )}
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="text-center py-8 text-slate-400">상세 정보를 불러올 수 없습니다.</div>
-                      )}
-                    </div>
-                  )}
-                </Fragment>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Pagination */}
-        {total > 20 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200">
-            <span className="text-sm text-slate-500">총 {total}건</span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1}
-                className="px-3 py-1 text-sm border border-slate-200 rounded hover:bg-slate-50 disabled:opacity-40"
-              >
-                이전
-              </button>
-              <span className="text-sm text-slate-700">
-                {page} / {Math.ceil(total / 20)}
-              </span>
-              <button
-                onClick={() => setPage((p) => Math.min(Math.ceil(total / 20), p + 1))}
-                disabled={page >= Math.ceil(total / 20)}
-                className="px-3 py-1 text-sm border border-slate-200 rounded hover:bg-slate-50 disabled:opacity-40"
-              >
-                다음
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Reject Modal */}
-      {showRejectModal && (
+      {/* PDF Modal - Analysis Detail */}
+      {selectedAnalysis && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">검사결과 반려</h3>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-slate-700 mb-2">반려 사유 (선택)</label>
-              <textarea
-                value={rejectionNote}
-                onChange={(e) => setRejectionNote(e.target.value)}
-                rows={3}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="반려 사유를 입력하세요..."
-              />
-            </div>
-            <div className="flex justify-end gap-3">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl mx-4 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+              <div className="flex items-center gap-3">
+                <FileText size={24} className="text-blue-500" />
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">
+                    검사결과 - {selectedAnalysis.patientName}
+                  </h3>
+                  <p className="text-sm text-slate-500">
+                    {selectedAnalysis.emrPatientId || '-'} |
+                    승인: {selectedAnalysis.approvedBy?.name} ({selectedAnalysis.approvedAt ? formatDateTime(selectedAnalysis.approvedAt) : '-'})
+                  </p>
+                </div>
+              </div>
               <button
-                onClick={() => { setShowRejectModal(false); setRejectionNote(''); }}
-                className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition"
+                onClick={() => setSelectedAnalysis(null)}
+                className="p-2 hover:bg-slate-100 rounded-lg transition"
               >
-                취소
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Priority Stamp at Top */}
+            {selectedAnalysis.priority && selectedAnalysis.priority !== 'NORMAL' && (
+              <div className={`mx-6 mt-4 p-4 rounded-lg border-2 text-center ${PRIORITY_COLORS[selectedAnalysis.priority]}`}>
+                <div className="text-lg font-bold">
+                  {selectedAnalysis.stamp || PRIORITY_LABELS[selectedAnalysis.priority]}
+                </div>
+              </div>
+            )}
+
+            {/* AI Comment */}
+            {selectedAnalysis.aiComment && (
+              <div className="mx-6 mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                <div className="flex items-center gap-2 text-amber-700 font-medium mb-2">
+                  <AlertTriangle size={16} />
+                  AI 분석 소견
+                </div>
+                <div className="text-sm text-amber-900 whitespace-pre-wrap">
+                  {selectedAnalysis.aiComment}
+                </div>
+              </div>
+            )}
+
+            {/* PDF Preview Area */}
+            <div className="flex-1 overflow-hidden p-6">
+              <div className="bg-slate-100 rounded-lg h-full flex items-center justify-center">
+                <iframe
+                  src={`${API_BASE}/api/lab-uploads/analyses/${selectedAnalysis.id}/export-pdf?token=${accessToken}`}
+                  className="w-full h-[400px] rounded-lg border border-slate-200"
+                  title="PDF Preview"
+                />
+              </div>
+            </div>
+
+            {/* Approval Info */}
+            <div className="px-6 py-3 bg-green-50 border-t border-green-100 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-green-700">
+                <CheckCircle2 size={18} />
+                <span className="font-medium">{selectedAnalysis.approvedBy?.name}</span>님이 승인
+              </div>
+              <div className="text-sm text-green-600">
+                {selectedAnalysis.approvedAt ? formatDateTime(selectedAnalysis.approvedAt) : ''}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200">
+              <button
+                onClick={() => handlePrintPdf(selectedAnalysis.id)}
+                className="flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition"
+              >
+                <Printer size={16} />
+                출력
               </button>
               <button
-                onClick={handleReject}
-                disabled={rejecting}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-50"
+                onClick={() => handleDownloadPdf(selectedAnalysis.id)}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
               >
-                {rejecting ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" />
-                    처리중...
-                  </>
-                ) : (
-                  '반려'
-                )}
+                <Download size={16} />
+                PDF 다운로드
               </button>
             </div>
           </div>

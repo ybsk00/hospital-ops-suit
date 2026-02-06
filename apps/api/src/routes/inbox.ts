@@ -26,6 +26,113 @@ router.get(
   }),
 );
 
+// ─── GET /api/inbox/calendar ── 달력 데이터 (월별 업무함 현황) ─────────
+router.get(
+  '/calendar',
+  requireAuth,
+  requirePermission('INBOX', 'READ'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const year = parseInt(req.query.year as string) || new Date().getFullYear();
+    const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
+    const type = req.query.type as string; // Optional: filter by type (e.g., LAB_APPROVED)
+
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0, 23, 59, 59, 999);
+
+    const where: any = {
+      ownerId: req.user!.id,
+      createdAt: {
+        gte: startDate,
+        lte: endDate,
+      },
+    };
+
+    if (type && Object.values(InboxItemType).includes(type as InboxItemType)) {
+      where.type = type as InboxItemType;
+    }
+
+    // 날짜별 그룹핑
+    const items = await prisma.inboxItem.findMany({
+      where,
+      select: {
+        id: true,
+        createdAt: true,
+      },
+    });
+
+    // 날짜별 카운트 집계
+    const dateCountMap = new Map<string, number>();
+    for (const item of items) {
+      const dateStr = item.createdAt.toISOString().slice(0, 10);
+      dateCountMap.set(dateStr, (dateCountMap.get(dateStr) || 0) + 1);
+    }
+
+    const days = Array.from(dateCountMap.entries()).map(([date, count]) => ({
+      date,
+      count,
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        year,
+        month,
+        days,
+      },
+    });
+  }),
+);
+
+// ─── GET /api/inbox/by-date/:date ── 특정 날짜 업무함 목록 ────────────
+router.get(
+  '/by-date/:date',
+  requireAuth,
+  requirePermission('INBOX', 'READ'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const dateStr = req.params.date;
+    const type = req.query.type as string; // Optional filter
+
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) {
+      throw new AppError(400, 'INVALID_DATE', '유효하지 않은 날짜입니다.');
+    }
+
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const where: any = {
+      ownerId: req.user!.id,
+      createdAt: {
+        gte: startOfDay,
+        lte: endOfDay,
+      },
+    };
+
+    if (type && Object.values(InboxItemType).includes(type as InboxItemType)) {
+      where.type = type as InboxItemType;
+    }
+
+    const items = await prisma.inboxItem.findMany({
+      where,
+      orderBy: [
+        { priority: 'desc' },
+        { createdAt: 'desc' },
+      ],
+    });
+
+    res.json({
+      success: true,
+      data: {
+        date: dateStr,
+        count: items.length,
+        items,
+      },
+    });
+  }),
+);
+
 // ─── GET /api/inbox ── 업무함 목록 조회 ─────────────────────────────
 router.get(
   '/',

@@ -3,6 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { z } from 'zod';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { prisma } from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
 import { requirePermission } from '../middleware/rbac';
@@ -350,7 +351,7 @@ router.post(
 );
 
 // ============================================================
-// DELETE /api/lab-uploads/:id - 파일 삭제
+// DELETE /api/lab-uploads/:id - 파일 삭제 (관련 분석결과 및 InboxItem도 함께 삭제)
 // ============================================================
 
 router.delete(
@@ -363,20 +364,49 @@ router.delete(
 
     const upload = await prisma.labUpload.findFirst({
       where: { id, deletedAt: null },
+      include: {
+        analyses: {
+          where: { deletedAt: null },
+          select: { id: true },
+        },
+      },
     });
 
     if (!upload) {
       throw new AppError(404, 'NOT_FOUND', '파일을 찾을 수 없습니다.');
     }
 
-    // 분석완료된 파일은 삭제 불가
-    if (upload.status === 'ANALYZED') {
-      throw new AppError(400, 'CANNOT_DELETE', '분석완료된 파일은 삭제할 수 없습니다.');
-    }
+    const analysisIds = upload.analyses.map((a) => a.id);
 
-    await prisma.labUpload.update({
-      where: { id },
-      data: { deletedAt: new Date() },
+    // 트랜잭션으로 삭제 처리
+    await prisma.$transaction(async (tx) => {
+      // 1. 관련 InboxItem 삭제 (LAB_APPROVED 타입)
+      if (analysisIds.length > 0) {
+        await tx.inboxItem.deleteMany({
+          where: {
+            entityType: 'LabAnalysis',
+            entityId: { in: analysisIds },
+          },
+        });
+
+        // 2. 관련 LabResult 삭제 (소프트 삭제)
+        await tx.labResult.updateMany({
+          where: { analysisId: { in: analysisIds } },
+          data: { deletedAt: new Date() },
+        });
+
+        // 3. 관련 LabAnalysis 삭제 (소프트 삭제)
+        await tx.labAnalysis.updateMany({
+          where: { id: { in: analysisIds } },
+          data: { deletedAt: new Date() },
+        });
+      }
+
+      // 4. LabUpload 삭제 (소프트 삭제)
+      await tx.labUpload.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      });
     });
 
     // 실제 파일 삭제
@@ -386,7 +416,14 @@ router.delete(
       // 파일 삭제 실패 무시
     }
 
-    res.json({ success: true, data: { id } });
+    res.json({
+      success: true,
+      data: {
+        id,
+        deletedAnalyses: analysisIds.length,
+        message: `파일과 관련 분석결과 ${analysisIds.length}건이 삭제되었습니다.`,
+      },
+    });
   }),
 );
 
@@ -463,6 +500,71 @@ router.put(
 );
 
 // ============================================================
+// DELETE /api/lab-uploads/analyses/:id - 분석결과 삭제 (개별)
+// ============================================================
+
+router.delete(
+  '/analyses/:id',
+  requireAuth,
+  requirePermission('LAB_UPLOADS', 'DELETE'),
+  auditLog('DELETE', 'LabAnalysis'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    const analysis = await prisma.labAnalysis.findFirst({
+      where: { id, deletedAt: null },
+      include: {
+        upload: { select: { id: true } },
+      },
+    });
+
+    if (!analysis) {
+      throw new AppError(404, 'NOT_FOUND', '분석 결과를 찾을 수 없습니다.');
+    }
+
+    // 트랜잭션으로 삭제 처리
+    await prisma.$transaction(async (tx) => {
+      // 1. 관련 InboxItem 삭제 (LAB_APPROVED 타입)
+      await tx.inboxItem.deleteMany({
+        where: {
+          entityType: 'LabAnalysis',
+          entityId: id,
+        },
+      });
+
+      // 2. 관련 LabResult 삭제 (소프트 삭제)
+      await tx.labResult.updateMany({
+        where: { analysisId: id },
+        data: { deletedAt: new Date() },
+      });
+
+      // 3. LabAnalysis 삭제 (소프트 삭제)
+      await tx.labAnalysis.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      });
+    });
+
+    // 해당 파일의 남은 분석결과가 없으면 파일도 삭제할지 확인
+    const remainingAnalyses = await prisma.labAnalysis.count({
+      where: {
+        uploadId: analysis.upload.id,
+        deletedAt: null,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        id,
+        remainingAnalyses,
+        message: '분석결과가 삭제되었습니다.',
+      },
+    });
+  }),
+);
+
+// ============================================================
 // POST /api/lab-uploads/analyses/approve - 분석 결과 승인 (다건)
 // ============================================================
 
@@ -479,6 +581,12 @@ router.post(
       throw new AppError(400, 'INVALID_INPUT', '승인할 분석 ID 목록이 필요합니다.');
     }
 
+    // 승인자 정보 조회
+    const approver = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true },
+    });
+
     // 승인 처리
     const result = await prisma.labAnalysis.updateMany({
       where: {
@@ -493,10 +601,63 @@ router.post(
       },
     });
 
+    // 승인된 분석 결과 조회
+    const approvedAnalyses = await prisma.labAnalysis.findMany({
+      where: {
+        id: { in: analysisIds },
+        status: 'APPROVED',
+      },
+      select: {
+        id: true,
+        patientName: true,
+        emrPatientId: true,
+        stamp: true,
+        priority: true,
+      },
+    });
+
+    // 직원(원무과, 간호부)에게 InboxItem 생성
+    const staffUsers = await prisma.user.findMany({
+      where: {
+        deletedAt: null,
+        isActive: true,
+        departments: {
+          some: {
+            department: {
+              code: { in: ['ADMIN', 'NURSING'] },
+            },
+          },
+        },
+      },
+      select: { id: true },
+      take: 10,
+    });
+
+    // InboxItem 일괄 생성
+    const inboxItems = [];
+    for (const analysis of approvedAnalyses) {
+      for (const staff of staffUsers) {
+        inboxItems.push({
+          ownerId: staff.id,
+          type: 'LAB_APPROVED' as const,
+          title: `[검사결과 승인] ${analysis.patientName || '환자'}`,
+          summary: `${analysis.stamp || ''} - ${approver?.name || '의사'} 승인`,
+          entityType: 'LabAnalysis',
+          entityId: analysis.id,
+          priority: analysis.priority === 'EMERGENCY' ? 10 : analysis.priority === 'URGENT' ? 8 : 5,
+        });
+      }
+    }
+
+    if (inboxItems.length > 0) {
+      await prisma.inboxItem.createMany({ data: inboxItems });
+    }
+
     res.json({
       success: true,
       data: {
         approvedCount: result.count,
+        inboxCreated: inboxItems.length,
         message: `${result.count}건이 승인되었습니다.`,
       },
     });
@@ -541,5 +702,387 @@ router.get(
     res.json({ success: true, data: { items: analyses } });
   }),
 );
+
+// ============================================================
+// GET /api/lab-uploads/analyses/:id/export-pdf - 환자별 PDF 내보내기
+// ============================================================
+
+router.get(
+  '/analyses/:id/export-pdf',
+  requireAuth,
+  requirePermission('LAB_UPLOADS', 'READ'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    const analysis = await prisma.labAnalysis.findFirst({
+      where: { id, deletedAt: null },
+      include: {
+        patient: { select: { id: true, name: true, emrPatientId: true } },
+        approvedBy: { select: { id: true, name: true } },
+        labResults: {
+          where: { deletedAt: null },
+          orderBy: { createdAt: 'asc' },
+        },
+        upload: { select: { uploadedDate: true } },
+      },
+    });
+
+    if (!analysis) {
+      throw new AppError(404, 'NOT_FOUND', '분석 결과를 찾을 수 없습니다.');
+    }
+
+    if (analysis.status !== 'APPROVED') {
+      throw new AppError(400, 'NOT_APPROVED', '승인된 검사결과만 PDF로 내보낼 수 있습니다.');
+    }
+
+    // PDF 생성
+    const pdfDoc = await PDFDocument.create();
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+    const page = pdfDoc.addPage([595, 842]); // A4
+    const { width, height } = page.getSize();
+    const margin = 50;
+    let y = height - margin;
+
+    // 스탬프 (우선순위) - 최상단에 배치
+    if (analysis.stamp || analysis.priority !== 'NORMAL') {
+      const stampText = analysis.stamp || getPriorityStampText(analysis.priority);
+      const stampColor = getPriorityColor(analysis.priority);
+
+      // 상단 중앙에 큰 스탬프 배치
+      const stampWidth = 200;
+      const stampHeight = 40;
+      const stampX = (width - stampWidth) / 2;
+      const stampY = y - stampHeight;
+
+      // 스탬프 배경
+      page.drawRectangle({
+        x: stampX,
+        y: stampY,
+        width: stampWidth,
+        height: stampHeight,
+        borderColor: stampColor,
+        borderWidth: 3,
+        color: rgb(1, 1, 1),
+      });
+
+      // 스탬프 텍스트
+      page.drawText(stampText, {
+        x: stampX + 10,
+        y: stampY + 12,
+        size: 16,
+        font: boldFont,
+        color: stampColor,
+      });
+
+      y -= stampHeight + 20;
+    }
+
+    // 헤더: 서울온케어 의원
+    page.drawText('Seoul Oncare Clinic', {
+      x: margin,
+      y,
+      size: 20,
+      font: boldFont,
+      color: rgb(0.2, 0.4, 0.6),
+    });
+    y -= 25;
+
+    page.drawText('Blood Test Results', {
+      x: margin,
+      y,
+      size: 14,
+      font,
+      color: rgb(0.3, 0.3, 0.3),
+    });
+    y -= 30;
+
+    // 구분선
+    page.drawLine({
+      start: { x: margin, y },
+      end: { x: width - margin, y },
+      thickness: 1,
+      color: rgb(0.7, 0.7, 0.7),
+    });
+    y -= 25;
+
+    // 환자 정보
+    const patientName = analysis.patientName || analysis.patient?.name || 'Unknown';
+    const emrId = analysis.emrPatientId || analysis.patient?.emrPatientId || '-';
+    const testDate = analysis.upload?.uploadedDate
+      ? new Date(analysis.upload.uploadedDate).toLocaleDateString('ko-KR')
+      : '-';
+
+    page.drawText(`Patient: ${patientName}`, { x: margin, y, size: 11, font: boldFont });
+    page.drawText(`Chart No: ${emrId}`, { x: 300, y, size: 11, font });
+    y -= 18;
+    page.drawText(`Test Date: ${testDate}`, { x: margin, y, size: 11, font });
+    y -= 30;
+
+    // 검사 결과 테이블
+    const colWidths = [120, 70, 60, 100, 60];
+    const headers = ['Test Item', 'Result', 'Unit', 'Reference', 'Flag'];
+    const tableX = margin;
+    let tableY = y;
+
+    // 테이블 헤더
+    page.drawRectangle({
+      x: tableX,
+      y: tableY - 20,
+      width: colWidths.reduce((a, b) => a + b, 0),
+      height: 20,
+      color: rgb(0.9, 0.9, 0.9),
+    });
+
+    let colX = tableX;
+    for (let i = 0; i < headers.length; i++) {
+      page.drawText(headers[i], {
+        x: colX + 5,
+        y: tableY - 15,
+        size: 9,
+        font: boldFont,
+      });
+      colX += colWidths[i];
+    }
+    tableY -= 22;
+
+    // 테이블 데이터
+    for (const result of analysis.labResults) {
+      if (tableY < 150) {
+        // 페이지 넘김 필요시 중단 (간단히 처리)
+        break;
+      }
+
+      colX = tableX;
+      const flagColor = getFlagColor(result.flag);
+
+      // 행 배경 (이상수치인 경우)
+      if (result.flag !== 'NORMAL') {
+        page.drawRectangle({
+          x: tableX,
+          y: tableY - 15,
+          width: colWidths.reduce((a, b) => a + b, 0),
+          height: 16,
+          color: rgb(1, 0.95, 0.9),
+        });
+      }
+
+      // 항목명
+      page.drawText(truncateText(result.analyte || result.testName, 18), {
+        x: colX + 5,
+        y: tableY - 12,
+        size: 9,
+        font,
+      });
+      colX += colWidths[0];
+
+      // 결과
+      page.drawText(String(result.value), {
+        x: colX + 5,
+        y: tableY - 12,
+        size: 9,
+        font: boldFont,
+        color: flagColor,
+      });
+      colX += colWidths[1];
+
+      // 단위
+      page.drawText(result.unit || '', {
+        x: colX + 5,
+        y: tableY - 12,
+        size: 9,
+        font,
+      });
+      colX += colWidths[2];
+
+      // 참고범위
+      const refRange = result.refLow && result.refHigh
+        ? `${result.refLow} - ${result.refHigh}`
+        : '-';
+      page.drawText(refRange, {
+        x: colX + 5,
+        y: tableY - 12,
+        size: 9,
+        font,
+      });
+      colX += colWidths[3];
+
+      // 판정
+      page.drawText(result.flag, {
+        x: colX + 5,
+        y: tableY - 12,
+        size: 9,
+        font: boldFont,
+        color: flagColor,
+      });
+
+      tableY -= 18;
+    }
+
+    y = tableY - 20;
+
+    // AI 소견
+    const comment = analysis.doctorComment || analysis.aiComment;
+    if (comment && y > 150) {
+      page.drawLine({
+        start: { x: margin, y },
+        end: { x: width - margin, y },
+        thickness: 0.5,
+        color: rgb(0.8, 0.8, 0.8),
+      });
+      y -= 20;
+
+      page.drawText('AI Analysis Opinion:', {
+        x: margin,
+        y,
+        size: 11,
+        font: boldFont,
+        color: rgb(0.2, 0.4, 0.6),
+      });
+      y -= 18;
+
+      // 코멘트 줄바꿈 처리
+      const lines = wrapText(comment, 80);
+      for (const line of lines) {
+        if (y < 100) break;
+        page.drawText(line, {
+          x: margin,
+          y,
+          size: 10,
+          font,
+          color: rgb(0.3, 0.3, 0.3),
+        });
+        y -= 14;
+      }
+    }
+
+    // 승인 정보 (하단)
+    y = 80;
+    page.drawLine({
+      start: { x: margin, y: y + 10 },
+      end: { x: width - margin, y: y + 10 },
+      thickness: 0.5,
+      color: rgb(0.8, 0.8, 0.8),
+    });
+
+    if (analysis.approvedAt && analysis.approvedBy) {
+      const approvalDate = new Date(analysis.approvedAt).toLocaleString('ko-KR');
+      page.drawText(`Approved: ${approvalDate}`, {
+        x: margin,
+        y,
+        size: 9,
+        font,
+        color: rgb(0.5, 0.5, 0.5),
+      });
+      page.drawText(`Approved by: ${analysis.approvedBy.name}`, {
+        x: margin,
+        y: y - 14,
+        size: 9,
+        font,
+        color: rgb(0.5, 0.5, 0.5),
+      });
+
+      // 승인 스탬프 (우측 하단)
+      const stampSize = 60;
+      const stampX = width - margin - stampSize;
+      const stampY = y - 20;
+
+      page.drawCircle({
+        x: stampX + stampSize / 2,
+        y: stampY + stampSize / 2,
+        size: stampSize / 2,
+        borderColor: rgb(0.8, 0.1, 0.1),
+        borderWidth: 2,
+      });
+
+      page.drawText('APPROVED', {
+        x: stampX + 8,
+        y: stampY + stampSize / 2 + 5,
+        size: 8,
+        font: boldFont,
+        color: rgb(0.8, 0.1, 0.1),
+      });
+
+      const stampDate = new Date(analysis.approvedAt).toLocaleDateString('ko-KR');
+      page.drawText(stampDate, {
+        x: stampX + 10,
+        y: stampY + stampSize / 2 - 8,
+        size: 7,
+        font,
+        color: rgb(0.8, 0.1, 0.1),
+      });
+
+      page.drawText(analysis.approvedBy.name, {
+        x: stampX + 15,
+        y: stampY + stampSize / 2 - 20,
+        size: 8,
+        font: boldFont,
+        color: rgb(0.8, 0.1, 0.1),
+      });
+    }
+
+    // PDF 출력
+    const pdfBytes = await pdfDoc.save();
+    const fileName = `lab-result-${patientName}-${testDate.replace(/\./g, '')}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+    res.send(Buffer.from(pdfBytes));
+  }),
+);
+
+// 헬퍼 함수들
+function getPriorityStampText(priority: string): string {
+  switch (priority) {
+    case 'EMERGENCY': return 'Emergency Room Visit Required';
+    case 'URGENT': return 'Hospital Visit Required Soon';
+    case 'RECHECK': return 'Retest Recommended';
+    case 'CAUTION': return 'Health Caution';
+    default: return '';
+  }
+}
+
+function getPriorityColor(priority: string) {
+  switch (priority) {
+    case 'EMERGENCY': return rgb(0.8, 0, 0);
+    case 'URGENT': return rgb(0.9, 0.4, 0);
+    case 'RECHECK': return rgb(0.8, 0.6, 0);
+    case 'CAUTION': return rgb(0.2, 0.6, 0.2);
+    default: return rgb(0.5, 0.5, 0.5);
+  }
+}
+
+function getFlagColor(flag: string) {
+  switch (flag) {
+    case 'CRITICAL': return rgb(0.8, 0, 0);
+    case 'HIGH': return rgb(0.9, 0.4, 0);
+    case 'LOW': return rgb(0, 0.4, 0.8);
+    default: return rgb(0, 0, 0);
+  }
+}
+
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return text.substring(0, maxLength - 2) + '..';
+}
+
+function wrapText(text: string, maxChars: number): string[] {
+  const lines: string[] = [];
+  const paragraphs = text.split('\n');
+
+  for (const para of paragraphs) {
+    let remaining = para;
+    while (remaining.length > maxChars) {
+      let breakPoint = remaining.lastIndexOf(' ', maxChars);
+      if (breakPoint === -1) breakPoint = maxChars;
+      lines.push(remaining.substring(0, breakPoint));
+      remaining = remaining.substring(breakPoint).trim();
+    }
+    if (remaining) lines.push(remaining);
+  }
+
+  return lines;
+}
 
 export default router;

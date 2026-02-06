@@ -673,6 +673,7 @@ enum InboxItemType {
   SYNC_CONFLICT
   MANUAL_FLAG
   BATCH_FAILURE
+  LAB_APPROVED
 }
 
 enum InboxItemStatus {

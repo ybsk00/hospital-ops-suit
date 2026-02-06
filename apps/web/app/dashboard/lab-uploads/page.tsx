@@ -23,6 +23,7 @@ import {
   X,
   Save,
   Check,
+  Trash2,
 } from 'lucide-react';
 
 /* ------------------------------------------------------------------ */
@@ -508,6 +509,52 @@ export default function LabUploadsPage() {
     }
   }
 
+  /* ---------- Delete analysis ------------------------------------ */
+
+  async function handleDeleteAnalysis(analysisId: string, patientName: string) {
+    if (!accessToken) return;
+
+    if (!confirm(`"${patientName}" 환자의 분석결과를 삭제하시겠습니까?\n\n삭제 시 검사결과 승인 페이지와 업무함에서도 함께 삭제됩니다.`)) return;
+
+    try {
+      await api(`/api/lab-uploads/analyses/${analysisId}`, {
+        method: 'DELETE',
+        token: accessToken,
+      });
+
+      alert('분석결과가 삭제되었습니다.');
+      fetchList();
+      fetchDetail(selectedDate);
+    } catch (err: any) {
+      alert(err.message || '삭제 실패');
+    }
+  }
+
+  /* ---------- Delete upload file --------------------------------- */
+
+  async function handleDeleteFile(fileId: string, fileName: string, analysisCount: number) {
+    if (!accessToken) return;
+
+    const message = analysisCount > 0
+      ? `"${fileName}" 파일을 삭제하시겠습니까?\n\n이 파일에 포함된 ${analysisCount}건의 분석결과도 함께 삭제되며,\n검사결과 승인 페이지와 업무함에서도 삭제됩니다.`
+      : `"${fileName}" 파일을 삭제하시겠습니까?`;
+
+    if (!confirm(message)) return;
+
+    try {
+      await api(`/api/lab-uploads/${fileId}`, {
+        method: 'DELETE',
+        token: accessToken,
+      });
+
+      alert('파일이 삭제되었습니다.');
+      fetchList();
+      fetchDetail(selectedDate);
+    } catch (err: any) {
+      alert(err.message || '삭제 실패');
+    }
+  }
+
   /* ---------- Calendar navigation --------------------------------- */
 
   function prevMonth() {
@@ -761,62 +808,62 @@ export default function LabUploadsPage() {
             ) : (
               <div className="p-4 space-y-6">
                 {/* Summary Cards (clickable for filtering) */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                   <button
                     onClick={() => setFilter('all')}
-                    className={`text-left rounded-lg border p-4 transition ${
+                    className={`text-left rounded-lg border p-3 transition ${
                       filter === 'all'
                         ? 'bg-blue-50 border-blue-300 ring-2 ring-blue-500'
                         : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
                     }`}
                   >
-                    <div className="flex items-center gap-2 text-slate-500 text-sm mb-1">
+                    <div className="flex items-center gap-2 text-slate-500 text-xs mb-1">
                       <FileText size={14} />
                       총 파일
                     </div>
-                    <div className="text-2xl font-bold text-slate-900">{detail.summary.totalFiles}</div>
+                    <div className="text-xl font-bold text-slate-900">{detail.summary.totalFiles}</div>
                   </button>
-                  <button
-                    onClick={() => setFilter('all')}
-                    className={`text-left rounded-lg border p-4 transition ${
-                      filter === 'all'
-                        ? 'bg-blue-50 border-blue-300 ring-2 ring-blue-500'
-                        : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 text-slate-500 text-sm mb-1">
-                      <Users size={14} />
-                      총 환자
+                  <div className="text-left rounded-lg border p-3 bg-purple-50 border-purple-200">
+                    <div className="flex items-center gap-2 text-purple-500 text-xs mb-1">
+                      <CheckCircle2 size={14} />
+                      분석완료
                     </div>
-                    <div className="text-2xl font-bold text-slate-900">{detail.summary.totalPatients}</div>
-                  </button>
+                    <div className="text-xl font-bold text-purple-600">{detail.summary.analyzedFiles}</div>
+                  </div>
+                  <div className="text-left rounded-lg border p-3 bg-yellow-50 border-yellow-200">
+                    <div className="flex items-center gap-2 text-yellow-600 text-xs mb-1">
+                      <Clock size={14} />
+                      미분석
+                    </div>
+                    <div className="text-xl font-bold text-yellow-600">{detail.summary.pendingFiles}</div>
+                  </div>
                   <button
                     onClick={() => setFilter('abnormal')}
-                    className={`text-left rounded-lg border p-4 transition ${
+                    className={`text-left rounded-lg border p-3 transition ${
                       filter === 'abnormal'
                         ? 'bg-red-100 border-red-400 ring-2 ring-red-500'
                         : 'bg-red-50 border-red-200 hover:bg-red-100'
                     }`}
                   >
-                    <div className="flex items-center gap-2 text-red-500 text-sm mb-1">
+                    <div className="flex items-center gap-2 text-red-500 text-xs mb-1">
                       <AlertTriangle size={14} />
                       이상소견
                     </div>
-                    <div className="text-2xl font-bold text-red-600">{detail.summary.abnormalPatients}</div>
+                    <div className="text-xl font-bold text-red-600">{detail.summary.abnormalPatients}</div>
                   </button>
                   <button
                     onClick={() => setFilter('normal')}
-                    className={`text-left rounded-lg border p-4 transition ${
+                    className={`text-left rounded-lg border p-3 transition ${
                       filter === 'normal'
                         ? 'bg-green-100 border-green-400 ring-2 ring-green-500'
                         : 'bg-green-50 border-green-200 hover:bg-green-100'
                     }`}
                   >
-                    <div className="flex items-center gap-2 text-green-500 text-sm mb-1">
+                    <div className="flex items-center gap-2 text-green-500 text-xs mb-1">
                       <CheckCircle2 size={14} />
                       정상
                     </div>
-                    <div className="text-2xl font-bold text-green-600">{detail.summary.normalPatients}</div>
+                    <div className="text-xl font-bold text-green-600">{detail.summary.normalPatients}</div>
                   </button>
                 </div>
 
@@ -868,6 +915,7 @@ export default function LabUploadsPage() {
                             <th className="text-left px-4 py-2 font-medium text-slate-600">스탬프</th>
                             <th className="text-left px-4 py-2 font-medium text-slate-600">정상/이상</th>
                             <th className="text-left px-4 py-2 font-medium text-slate-600">상태</th>
+                            <th className="text-left px-4 py-2 font-medium text-slate-600 w-16">삭제</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -919,6 +967,15 @@ export default function LabUploadsPage() {
                                     {STATUS_LABELS[analysis.status] || analysis.status}
                                   </span>
                                 </td>
+                                <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    onClick={() => handleDeleteAnalysis(analysis.id, analysis.patientName)}
+                                    className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition"
+                                    title="삭제"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </td>
                               </tr>
                             ))
                           )}
@@ -940,6 +997,7 @@ export default function LabUploadsPage() {
                           <th className="text-left px-4 py-2 font-medium text-slate-600">형식</th>
                           <th className="text-left px-4 py-2 font-medium text-slate-600">상태</th>
                           <th className="text-left px-4 py-2 font-medium text-slate-600">환자수</th>
+                          <th className="text-left px-4 py-2 font-medium text-slate-600 w-16">삭제</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -962,6 +1020,15 @@ export default function LabUploadsPage() {
                               </span>
                             </td>
                             <td className="px-4 py-3 text-slate-700">{file.analyses.length}</td>
+                            <td className="px-4 py-3">
+                              <button
+                                onClick={() => handleDeleteFile(file.id, file.fileName, file.analyses.length)}
+                                className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition"
+                                title="파일 삭제"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>

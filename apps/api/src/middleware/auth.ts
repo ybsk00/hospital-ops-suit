@@ -5,12 +5,18 @@ import { AppError } from './errorHandler';
 import type { AuthUser } from '../types/express';
 
 function extractToken(req: Request): string | null {
+  // 1. Authorization header (Bearer token)
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     return authHeader.slice(7);
   }
+  // 2. Cookie
   if (req.cookies?.accessToken) {
     return req.cookies.accessToken;
+  }
+  // 3. Query parameter (for PDF downloads via window.open)
+  if (req.query.token && typeof req.query.token === 'string') {
+    return req.query.token;
   }
   return null;
 }
