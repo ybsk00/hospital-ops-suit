@@ -27,6 +27,7 @@ RUN npm ci --omit=dev
 RUN npx prisma generate
 
 COPY --from=builder /app/dist ./dist/
+COPY fonts ./fonts/
 
 ENV NODE_ENV=production
 ENV PORT=8080

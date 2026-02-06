@@ -3,7 +3,8 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { z } from 'zod';
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { PDFDocument, rgb } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
 import { prisma } from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
 import { requirePermission } from '../middleware/rbac';
@@ -735,10 +736,26 @@ router.get(
       throw new AppError(400, 'NOT_APPROVED', '승인된 검사결과만 PDF로 내보낼 수 있습니다.');
     }
 
-    // PDF 생성
+    // PDF 생성 - 한글 폰트 지원
     const pdfDoc = await PDFDocument.create();
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    pdfDoc.registerFontkit(fontkit);
+
+    // Noto Sans KR 폰트 로드
+    const fontPath = path.join(__dirname, '../../fonts/NotoSansKR-Regular.ttf');
+    let font;
+    let boldFont;
+
+    if (fs.existsSync(fontPath)) {
+      const fontBytes = fs.readFileSync(fontPath);
+      font = await pdfDoc.embedFont(fontBytes);
+      boldFont = font; // 한글 폰트는 볼드 별도 없이 동일 사용
+    } else {
+      // 폰트 파일이 없으면 기본 폰트 사용 (한글 안됨)
+      const { StandardFonts } = await import('pdf-lib');
+      font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      console.warn('Korean font not found, using Helvetica (Korean text will not display)');
+    }
 
     const page = pdfDoc.addPage([595, 842]); // A4
     const { width, height } = page.getSize();
@@ -780,7 +797,7 @@ router.get(
     }
 
     // 헤더: 서울온케어 의원
-    page.drawText('Seoul Oncare Clinic', {
+    page.drawText('서울온케어 의원', {
       x: margin,
       y,
       size: 20,
@@ -789,7 +806,7 @@ router.get(
     });
     y -= 25;
 
-    page.drawText('Blood Test Results', {
+    page.drawText('혈액검사 결과지', {
       x: margin,
       y,
       size: 14,
@@ -812,15 +829,15 @@ router.get(
     const emrId = sanitizeForPdf(analysis.emrPatientId || analysis.patient?.emrPatientId) || '-';
     const testDate = formatDateForPdf(analysis.upload?.uploadedDate);
 
-    page.drawText(`Patient: ${patientName}`, { x: margin, y, size: 11, font: boldFont });
-    page.drawText(`Chart No: ${emrId}`, { x: 300, y, size: 11, font });
+    page.drawText(`환자명: ${patientName}`, { x: margin, y, size: 11, font: boldFont });
+    page.drawText(`차트번호: ${emrId}`, { x: 300, y, size: 11, font });
     y -= 18;
-    page.drawText(`Test Date: ${testDate}`, { x: margin, y, size: 11, font });
+    page.drawText(`검사일: ${testDate}`, { x: margin, y, size: 11, font });
     y -= 30;
 
     // 검사 결과 테이블
     const colWidths = [120, 70, 60, 100, 60];
-    const headers = ['Test Item', 'Result', 'Unit', 'Reference', 'Flag'];
+    const headers = ['검사항목', '결과', '단위', '참고범위', '판정'];
     const tableX = margin;
     let tableY = y;
 
@@ -934,7 +951,7 @@ router.get(
       });
       y -= 20;
 
-      page.drawText('AI Analysis Opinion:', {
+      page.drawText('AI 분석 소견:', {
         x: margin,
         y,
         size: 11,
@@ -971,14 +988,14 @@ router.get(
       const approvalDate = formatDateTimeForPdf(analysis.approvedAt);
       const approverName = sanitizeForPdf(analysis.approvedBy.name) || 'Doctor';
 
-      page.drawText(`Approved: ${approvalDate}`, {
+      page.drawText(`승인일시: ${approvalDate}`, {
         x: margin,
         y,
         size: 9,
         font,
         color: rgb(0.5, 0.5, 0.5),
       });
-      page.drawText(`Approved by: ${approverName}`, {
+      page.drawText(`승인의사: ${approverName}`, {
         x: margin,
         y: y - 14,
         size: 9,
@@ -999,10 +1016,10 @@ router.get(
         borderWidth: 2,
       });
 
-      page.drawText('APPROVED', {
-        x: stampX + 8,
+      page.drawText('승인', {
+        x: stampX + 18,
         y: stampY + stampSize / 2 + 5,
-        size: 8,
+        size: 10,
         font: boldFont,
         color: rgb(0.8, 0.1, 0.1),
       });
@@ -1039,10 +1056,10 @@ router.get(
 // 헬퍼 함수들
 function getPriorityStampText(priority: string): string {
   switch (priority) {
-    case 'EMERGENCY': return 'Emergency Room Visit Required';
-    case 'URGENT': return 'Hospital Visit Required Soon';
-    case 'RECHECK': return 'Retest Recommended';
-    case 'CAUTION': return 'Health Caution';
+    case 'EMERGENCY': return '응급실 방문 필요';
+    case 'URGENT': return '병원 내원 요망';
+    case 'RECHECK': return '재검사 요망';
+    case 'CAUTION': return '건강 유의';
     default: return '';
   }
 }
@@ -1071,32 +1088,31 @@ function truncateText(text: string, maxLength: number): string {
   return text.substring(0, maxLength - 2) + '..';
 }
 
-// PDF용 텍스트 정제 (이모지, 비 WinAnsi 문자 제거)
+// PDF용 텍스트 정제 (이모지만 제거, 한글은 유지)
 function sanitizeForPdf(text: string | null | undefined): string {
   if (!text) return '';
-  // WinAnsi 인코딩 가능한 문자만 유지 (기본 ASCII + 확장 Latin)
-  // 이모지 및 한글 등 제거
+  // 이모지만 제거하고 한글은 유지
   return text
     .replace(/[\u{1F300}-\u{1F9FF}]/gu, '') // 이모지 제거
     .replace(/[\u{2600}-\u{26FF}]/gu, '')   // 기타 기호 제거
     .replace(/[\u{2700}-\u{27BF}]/gu, '')   // Dingbats 제거
     .replace(/[\u{FE00}-\u{FEFF}]/gu, '')   // Variation selectors 제거
     .replace(/[\u{1F000}-\u{1FFFF}]/gu, '') // 추가 이모지 범위
-    .replace(/[^\x00-\xFF]/g, '')           // 비 Latin-1 문자 제거
+    .replace(/[\u{E000}-\u{F8FF}]/gu, '')   // Private Use Area 제거
     .trim();
 }
 
-// 날짜를 영문 형식으로 변환
+// 날짜를 한글 형식으로 변환
 function formatDateForPdf(date: Date | string | null): string {
   if (!date) return '-';
   const d = typeof date === 'string' ? new Date(date) : date;
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일`;
 }
 
 function formatDateTimeForPdf(date: Date | string | null): string {
   if (!date) return '-';
   const d = typeof date === 'string' ? new Date(date) : date;
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 function wrapText(text: string, maxChars: number): string[] {
