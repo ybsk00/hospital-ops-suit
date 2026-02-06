@@ -10,7 +10,7 @@ import { AdmissionStatus } from '@prisma/client';
 const router = Router();
 
 // ─── GET /api/admissions/summary ── 요약 (챗봇용) ────────────────────
-// NOTE: /summary 는 /:id 보다 먼저 선언해야 라우트 충돌 방지
+// NOTE: /summary, /available-beds, /doctors 는 /:id 보다 먼저 선언해야 라우트 충돌 방지
 router.get(
   '/summary',
   requireAuth,
@@ -30,6 +30,121 @@ router.get(
       success: true,
       data: { total: admissions.length, byStatus },
     });
+  }),
+);
+
+// ─── GET /api/admissions/available-beds ── 사용가능 베드 목록 ────────
+// NOTE: /:id 보다 먼저 선언해야 라우트 충돌 방지
+router.get(
+  '/available-beds',
+  requireAuth,
+  requirePermission('ADMISSIONS', 'READ'),
+  asyncHandler(async (_req: Request, res: Response) => {
+    const beds = await prisma.bed.findMany({
+      where: {
+        deletedAt: null,
+        isActive: true,
+        status: { in: ['EMPTY', 'RESERVED'] },
+      },
+      include: {
+        room: { include: { ward: { select: { id: true, name: true } } } },
+      },
+      orderBy: [
+        { room: { ward: { name: 'asc' } } },
+        { room: { name: 'asc' } },
+        { label: 'asc' },
+      ],
+    });
+
+    res.json({ success: true, data: beds });
+  }),
+);
+
+// ─── GET /api/admissions/doctors ── 담당의 목록 ──────────────────────
+// NOTE: /:id 보다 먼저 선언해야 라우트 충돌 방지
+router.get(
+  '/doctors',
+  requireAuth,
+  requirePermission('ADMISSIONS', 'READ'),
+  asyncHandler(async (_req: Request, res: Response) => {
+    // 의사 역할을 가진 사용자 조회
+    const doctors = await prisma.user.findMany({
+      where: {
+        deletedAt: null,
+        isActive: true,
+        departments: {
+          some: {
+            role: 'DOCTOR',
+          },
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        loginId: true,
+        departments: {
+          select: { role: true, department: { select: { name: true } } },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    res.json({ success: true, data: doctors });
+  }),
+);
+
+// ─── GET /api/admissions/calendar ── 달력 뷰용 입원 조회 ────────────
+// NOTE: /:id 보다 먼저 선언해야 라우트 충돌 방지
+router.get(
+  '/calendar',
+  requireAuth,
+  requirePermission('ADMISSIONS', 'READ'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { from, to, wardId } = req.query;
+
+    if (!from || !to) {
+      throw new AppError(400, 'INVALID_REQUEST', 'from, to 날짜가 필요합니다.');
+    }
+
+    const fromDate = new Date(from as string);
+    const toDate = new Date(to as string);
+    toDate.setHours(23, 59, 59, 999);
+
+    const where: any = {
+      deletedAt: null,
+      OR: [
+        // 입원일이 범위 내
+        { admitDate: { gte: fromDate, lte: toDate } },
+        // 퇴원예정일이 범위 내
+        { plannedDischargeDate: { gte: fromDate, lte: toDate } },
+        // 입원중인 경우 (범위 내에 걸쳐있는)
+        {
+          admitDate: { lte: toDate },
+          OR: [
+            { plannedDischargeDate: { gte: fromDate } },
+            { plannedDischargeDate: null, status: { not: 'DISCHARGED' } },
+          ],
+        },
+      ],
+    };
+
+    if (wardId) {
+      where.currentBed = { room: { wardId: wardId as string } };
+    }
+
+    const admissions = await prisma.admission.findMany({
+      where,
+      include: {
+        patient: { select: { id: true, name: true, emrPatientId: true } },
+        currentBed: {
+          include: { room: { include: { ward: true } } },
+        },
+        attendingDoctor: { select: { id: true, name: true } },
+      },
+      orderBy: { admitDate: 'asc' },
+    });
+
+    res.json({ success: true, data: admissions });
   }),
 );
 
@@ -638,118 +753,6 @@ router.delete(
     });
 
     res.json({ success: true, message: '삭제되었습니다.' });
-  }),
-);
-
-// ─── GET /api/admissions/calendar ── 달력 뷰용 입원 조회 ────────────
-router.get(
-  '/calendar',
-  requireAuth,
-  requirePermission('ADMISSIONS', 'READ'),
-  asyncHandler(async (req: Request, res: Response) => {
-    const { from, to, wardId } = req.query;
-
-    if (!from || !to) {
-      throw new AppError(400, 'INVALID_REQUEST', 'from, to 날짜가 필요합니다.');
-    }
-
-    const fromDate = new Date(from as string);
-    const toDate = new Date(to as string);
-    toDate.setHours(23, 59, 59, 999);
-
-    const where: any = {
-      deletedAt: null,
-      OR: [
-        // 입원일이 범위 내
-        { admitDate: { gte: fromDate, lte: toDate } },
-        // 퇴원예정일이 범위 내
-        { plannedDischargeDate: { gte: fromDate, lte: toDate } },
-        // 입원중인 경우 (범위 내에 걸쳐있는)
-        {
-          admitDate: { lte: toDate },
-          OR: [
-            { plannedDischargeDate: { gte: fromDate } },
-            { plannedDischargeDate: null, status: { not: 'DISCHARGED' } },
-          ],
-        },
-      ],
-    };
-
-    if (wardId) {
-      where.currentBed = { room: { wardId: wardId as string } };
-    }
-
-    const admissions = await prisma.admission.findMany({
-      where,
-      include: {
-        patient: { select: { id: true, name: true, emrPatientId: true } },
-        currentBed: {
-          include: { room: { include: { ward: true } } },
-        },
-        attendingDoctor: { select: { id: true, name: true } },
-      },
-      orderBy: { admitDate: 'asc' },
-    });
-
-    res.json({ success: true, data: admissions });
-  }),
-);
-
-// ─── GET /api/admissions/available-beds ── 사용가능 베드 목록 ────────
-router.get(
-  '/available-beds',
-  requireAuth,
-  requirePermission('ADMISSIONS', 'READ'),
-  asyncHandler(async (_req: Request, res: Response) => {
-    const beds = await prisma.bed.findMany({
-      where: {
-        deletedAt: null,
-        isActive: true,
-        status: { in: ['EMPTY', 'RESERVED'] },
-      },
-      include: {
-        room: { include: { ward: { select: { id: true, name: true } } } },
-      },
-      orderBy: [
-        { room: { ward: { name: 'asc' } } },
-        { room: { name: 'asc' } },
-        { label: 'asc' },
-      ],
-    });
-
-    res.json({ success: true, data: beds });
-  }),
-);
-
-// ─── GET /api/admissions/doctors ── 담당의 목록 ──────────────────────
-router.get(
-  '/doctors',
-  requireAuth,
-  requirePermission('ADMISSIONS', 'READ'),
-  asyncHandler(async (_req: Request, res: Response) => {
-    // 의사 역할을 가진 사용자 조회
-    const doctors = await prisma.user.findMany({
-      where: {
-        deletedAt: null,
-        isActive: true,
-        departments: {
-          some: {
-            role: 'DOCTOR',
-          },
-        },
-      },
-      select: {
-        id: true,
-        name: true,
-        loginId: true,
-        departments: {
-          select: { role: true, department: { select: { name: true } } },
-        },
-      },
-      orderBy: { name: 'asc' },
-    });
-
-    res.json({ success: true, data: doctors });
   }),
 );
 

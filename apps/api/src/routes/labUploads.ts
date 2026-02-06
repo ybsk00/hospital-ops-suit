@@ -991,7 +991,7 @@ router.get(
         pageCount++;
         y = height - margin;
 
-        currentPage.drawText(`${headerTitle} - AI 분석 소견`, {
+        currentPage.drawText(`${headerTitle} - 분석 소견`, {
           x: margin,
           y,
           size: 12,
@@ -1009,7 +1009,7 @@ router.get(
       });
       y -= 20;
 
-      currentPage.drawText('AI 분석 소견:', {
+      currentPage.drawText('분석 소견:', {
         x: margin,
         y,
         size: 11,
