@@ -747,7 +747,7 @@ router.get(
 
     // 스탬프 (우선순위) - 최상단에 배치
     if (analysis.stamp || analysis.priority !== 'NORMAL') {
-      const stampText = analysis.stamp || getPriorityStampText(analysis.priority);
+      const stampText = sanitizeForPdf(analysis.stamp) || getPriorityStampText(analysis.priority);
       const stampColor = getPriorityColor(analysis.priority);
 
       // 상단 중앙에 큰 스탬프 배치
@@ -808,11 +808,9 @@ router.get(
     y -= 25;
 
     // 환자 정보
-    const patientName = analysis.patientName || analysis.patient?.name || 'Unknown';
-    const emrId = analysis.emrPatientId || analysis.patient?.emrPatientId || '-';
-    const testDate = analysis.upload?.uploadedDate
-      ? new Date(analysis.upload.uploadedDate).toLocaleDateString('ko-KR')
-      : '-';
+    const patientName = sanitizeForPdf(analysis.patientName || analysis.patient?.name) || 'Unknown';
+    const emrId = sanitizeForPdf(analysis.emrPatientId || analysis.patient?.emrPatientId) || '-';
+    const testDate = formatDateForPdf(analysis.upload?.uploadedDate);
 
     page.drawText(`Patient: ${patientName}`, { x: margin, y, size: 11, font: boldFont });
     page.drawText(`Chart No: ${emrId}`, { x: 300, y, size: 11, font });
@@ -868,8 +866,8 @@ router.get(
         });
       }
 
-      // 항목명 (null 안전 처리)
-      const testItemName = result.analyte || result.testName || 'Unknown';
+      // 항목명 (null 안전 처리 + PDF 정제)
+      const testItemName = sanitizeForPdf(result.analyte || result.testName) || 'Unknown';
       page.drawText(truncateText(testItemName, 18), {
         x: colX + 5,
         y: tableY - 12,
@@ -890,7 +888,7 @@ router.get(
       colX += colWidths[1];
 
       // 단위
-      page.drawText(result.unit || '', {
+      page.drawText(sanitizeForPdf(result.unit) || '', {
         x: colX + 5,
         y: tableY - 12,
         size: 9,
@@ -925,7 +923,8 @@ router.get(
     y = tableY - 20;
 
     // AI 소견
-    const comment = analysis.doctorComment || analysis.aiComment;
+    const rawComment = analysis.doctorComment || analysis.aiComment;
+    const comment = sanitizeForPdf(rawComment);
     if (comment && y > 150) {
       page.drawLine({
         start: { x: margin, y },
@@ -969,7 +968,9 @@ router.get(
     });
 
     if (analysis.approvedAt && analysis.approvedBy) {
-      const approvalDate = new Date(analysis.approvedAt).toLocaleString('ko-KR');
+      const approvalDate = formatDateTimeForPdf(analysis.approvedAt);
+      const approverName = sanitizeForPdf(analysis.approvedBy.name) || 'Doctor';
+
       page.drawText(`Approved: ${approvalDate}`, {
         x: margin,
         y,
@@ -977,7 +978,7 @@ router.get(
         font,
         color: rgb(0.5, 0.5, 0.5),
       });
-      page.drawText(`Approved by: ${analysis.approvedBy.name}`, {
+      page.drawText(`Approved by: ${approverName}`, {
         x: margin,
         y: y - 14,
         size: 9,
@@ -1006,7 +1007,7 @@ router.get(
         color: rgb(0.8, 0.1, 0.1),
       });
 
-      const stampDate = new Date(analysis.approvedAt).toLocaleDateString('ko-KR');
+      const stampDate = formatDateForPdf(analysis.approvedAt);
       page.drawText(stampDate, {
         x: stampX + 10,
         y: stampY + stampSize / 2 - 8,
@@ -1015,7 +1016,7 @@ router.get(
         color: rgb(0.8, 0.1, 0.1),
       });
 
-      page.drawText(analysis.approvedBy.name, {
+      page.drawText(approverName, {
         x: stampX + 15,
         y: stampY + stampSize / 2 - 20,
         size: 8,
@@ -1026,7 +1027,8 @@ router.get(
 
     // PDF 출력
     const pdfBytes = await pdfDoc.save();
-    const fileName = `lab-result-${patientName}-${testDate.replace(/\./g, '')}.pdf`;
+    const safePatientName = patientName.replace(/[^a-zA-Z0-9]/g, '_') || 'patient';
+    const fileName = `lab-result-${safePatientName}-${testDate.replace(/-/g, '')}.pdf`;
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
@@ -1067,6 +1069,34 @@ function getFlagColor(flag: string) {
 function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
   return text.substring(0, maxLength - 2) + '..';
+}
+
+// PDF용 텍스트 정제 (이모지, 비 WinAnsi 문자 제거)
+function sanitizeForPdf(text: string | null | undefined): string {
+  if (!text) return '';
+  // WinAnsi 인코딩 가능한 문자만 유지 (기본 ASCII + 확장 Latin)
+  // 이모지 및 한글 등 제거
+  return text
+    .replace(/[\u{1F300}-\u{1F9FF}]/gu, '') // 이모지 제거
+    .replace(/[\u{2600}-\u{26FF}]/gu, '')   // 기타 기호 제거
+    .replace(/[\u{2700}-\u{27BF}]/gu, '')   // Dingbats 제거
+    .replace(/[\u{FE00}-\u{FEFF}]/gu, '')   // Variation selectors 제거
+    .replace(/[\u{1F000}-\u{1FFFF}]/gu, '') // 추가 이모지 범위
+    .replace(/[^\x00-\xFF]/g, '')           // 비 Latin-1 문자 제거
+    .trim();
+}
+
+// 날짜를 영문 형식으로 변환
+function formatDateForPdf(date: Date | string | null): string {
+  if (!date) return '-';
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function formatDateTimeForPdf(date: Date | string | null): string {
+  if (!date) return '-';
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 function wrapText(text: string, maxChars: number): string[] {
