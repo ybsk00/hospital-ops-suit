@@ -762,14 +762,17 @@ router.get(
     const margin = 50;
     let y = height - margin;
 
-    // 스탬프 (우선순위) - 최상단에 배치
+    // 스탬프 (우선순위) - 최상단 가운데 배치
     if (analysis.stamp || analysis.priority !== 'NORMAL') {
       const stampText = sanitizeForPdf(analysis.stamp) || getPriorityStampText(analysis.priority);
       const stampColor = getPriorityColor(analysis.priority);
 
-      // 상단 중앙에 큰 스탬프 배치
-      const stampWidth = 200;
-      const stampHeight = 40;
+      // 스탬프 텍스트 너비 계산하여 가운데 정렬
+      const stampFontSize = 16;
+      const stampTextWidth = font.widthOfTextAtSize(stampText, stampFontSize);
+      const stampPadding = 20;
+      const stampWidth = stampTextWidth + stampPadding * 2;
+      const stampHeight = 36;
       const stampX = (width - stampWidth) / 2;
       const stampY = y - stampHeight;
 
@@ -780,40 +783,45 @@ router.get(
         width: stampWidth,
         height: stampHeight,
         borderColor: stampColor,
-        borderWidth: 3,
+        borderWidth: 2,
         color: rgb(1, 1, 1),
       });
 
-      // 스탬프 텍스트
+      // 스탬프 텍스트 (가운데 정렬)
       page.drawText(stampText, {
-        x: stampX + 10,
-        y: stampY + 12,
-        size: 16,
+        x: stampX + stampPadding,
+        y: stampY + 10,
+        size: stampFontSize,
         font: boldFont,
         color: stampColor,
       });
 
-      y -= stampHeight + 20;
+      y -= stampHeight + 25;
     }
 
-    // 헤더: 서울온케어 의원
-    page.drawText('서울온케어 의원', {
-      x: margin,
+    // 헤더: 서울온케어의원 (가운데 정렬)
+    const headerTitle = '서울온케어의원';
+    const headerTitleWidth = font.widthOfTextAtSize(headerTitle, 22);
+    page.drawText(headerTitle, {
+      x: (width - headerTitleWidth) / 2,
       y,
-      size: 20,
+      size: 22,
       font: boldFont,
       color: rgb(0.2, 0.4, 0.6),
     });
-    y -= 25;
+    y -= 30;
 
-    page.drawText('혈액검사 결과지', {
-      x: margin,
+    // 혈액검사결과지 (가운데 정렬)
+    const subTitle = '혈액검사결과지';
+    const subTitleWidth = font.widthOfTextAtSize(subTitle, 14);
+    page.drawText(subTitle, {
+      x: (width - subTitleWidth) / 2,
       y,
       size: 14,
       font,
-      color: rgb(0.3, 0.3, 0.3),
+      color: rgb(0.4, 0.4, 0.4),
     });
-    y -= 30;
+    y -= 35;
 
     // 구분선
     page.drawLine({
@@ -830,15 +838,16 @@ router.get(
     const testDate = formatDateForPdf(analysis.upload?.uploadedDate);
 
     page.drawText(`환자명: ${patientName}`, { x: margin, y, size: 11, font: boldFont });
-    page.drawText(`차트번호: ${emrId}`, { x: 300, y, size: 11, font });
+    page.drawText(`차트번호: ${emrId}`, { x: width - margin - 150, y, size: 11, font });
     y -= 18;
     page.drawText(`검사일: ${testDate}`, { x: margin, y, size: 11, font });
     y -= 30;
 
-    // 검사 결과 테이블
-    const colWidths = [120, 70, 60, 100, 60];
+    // 검사 결과 테이블 (가운데 정렬)
+    const colWidths = [130, 70, 50, 90, 60];
+    const tableWidth = colWidths.reduce((a, b) => a + b, 0);
     const headers = ['검사항목', '결과', '단위', '참고범위', '판정'];
-    const tableX = margin;
+    const tableX = (width - tableWidth) / 2;
     let tableY = y;
 
     // 테이블 헤더
@@ -1047,8 +1056,12 @@ router.get(
     const safePatientName = patientName.replace(/[^a-zA-Z0-9]/g, '_') || 'patient';
     const fileName = `lab-result-${safePatientName}-${testDate.replace(/-/g, '')}.pdf`;
 
+    // download=true 파라미터가 있으면 다운로드, 없으면 브라우저에서 미리보기
+    const forceDownload = req.query.download === 'true';
+    const disposition = forceDownload ? 'attachment' : 'inline';
+
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(fileName)}"`);
     res.send(Buffer.from(pdfBytes));
   }),
 );

@@ -48,6 +48,18 @@ interface AvailableBed {
   room: { id: string; name: string; ward: { id: string; name: string } };
 }
 
+interface WardGroup {
+  id: string;
+  name: string;
+  rooms: RoomGroup[];
+}
+
+interface RoomGroup {
+  id: string;
+  name: string;
+  beds: AvailableBed[];
+}
+
 interface Doctor {
   id: string;
   name: string;
@@ -103,12 +115,17 @@ export default function AdmissionsPage() {
   const [form, setForm] = useState({
     patientName: '',
     emrPatientId: '',
+    wardId: '',
+    roomId: '',
     bedId: '',
     attendingDoctorId: '',
     admitDate: new Date().toISOString().slice(0, 10),
     plannedDischargeDate: '',
     notes: '',
   });
+
+  // Grouped beds by ward/room
+  const [wardGroups, setWardGroups] = useState<WardGroup[]>([]);
 
   // Fetch daily list
   const fetchAdmissions = useCallback(async () => {
@@ -178,8 +195,41 @@ export default function AdmissionsPage() {
         api<AvailableBed[]>('/api/admissions/available-beds', { token: accessToken }),
         api<Doctor[]>('/api/admissions/doctors', { token: accessToken }),
       ]);
-      setAvailableBeds(bedsRes.data || []);
+      const beds = bedsRes.data || [];
+      setAvailableBeds(beds);
       setDoctors(doctorsRes.data || []);
+
+      // Group beds by ward and room
+      const wardMap = new Map<string, WardGroup>();
+      for (const bed of beds) {
+        const wardId = bed.room.ward.id;
+        const wardName = bed.room.ward.name;
+        const roomId = bed.room.id;
+        const roomName = bed.room.name;
+
+        if (!wardMap.has(wardId)) {
+          wardMap.set(wardId, { id: wardId, name: wardName, rooms: [] });
+        }
+
+        const ward = wardMap.get(wardId)!;
+        let room = ward.rooms.find(r => r.id === roomId);
+        if (!room) {
+          room = { id: roomId, name: roomName, beds: [] };
+          ward.rooms.push(room);
+        }
+        room.beds.push(bed);
+      }
+
+      // Sort
+      const groups = Array.from(wardMap.values());
+      groups.sort((a, b) => a.name.localeCompare(b.name));
+      for (const ward of groups) {
+        ward.rooms.sort((a, b) => a.name.localeCompare(b.name));
+        for (const room of ward.rooms) {
+          room.beds.sort((a, b) => a.label.localeCompare(b.label));
+        }
+      }
+      setWardGroups(groups);
     } catch {
       // handle
     }
@@ -219,6 +269,8 @@ export default function AdmissionsPage() {
       setForm({
         patientName: '',
         emrPatientId: '',
+        wardId: '',
+        roomId: '',
         bedId: '',
         attendingDoctorId: '',
         admitDate: new Date().toISOString().slice(0, 10),
@@ -652,20 +704,60 @@ export default function AdmissionsPage() {
                 />
               </div>
 
-              {/* 병실/베드 (필수) */}
+              {/* 병동 선택 */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
-                  병실/베드 <span className="text-red-500">*</span>
+                  병동 <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={form.wardId}
+                  onChange={(e) => setForm({ ...form, wardId: e.target.value, roomId: '', bedId: '' })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                >
+                  <option value="">병동 선택</option>
+                  {wardGroups.map((ward) => (
+                    <option key={ward.id} value={ward.id}>
+                      {ward.name} ({ward.rooms.reduce((sum, r) => sum + r.beds.length, 0)}개 베드 가용)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 병실 선택 */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  병실 <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={form.roomId}
+                  onChange={(e) => setForm({ ...form, roomId: e.target.value, bedId: '' })}
+                  disabled={!form.wardId}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
+                >
+                  <option value="">병실 선택</option>
+                  {wardGroups.find(w => w.id === form.wardId)?.rooms.map((room) => (
+                    <option key={room.id} value={room.id}>
+                      {room.name} ({room.beds.length}개 베드 가용)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 베드 선택 */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  베드 <span className="text-red-500">*</span>
                 </label>
                 <select
                   value={form.bedId}
                   onChange={(e) => setForm({ ...form, bedId: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  disabled={!form.roomId}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                 >
-                  <option value="">선택하세요</option>
-                  {availableBeds.map((bed) => (
+                  <option value="">베드 선택</option>
+                  {wardGroups.find(w => w.id === form.wardId)?.rooms.find(r => r.id === form.roomId)?.beds.map((bed) => (
                     <option key={bed.id} value={bed.id}>
-                      {bed.room.ward.name} {bed.room.name}-{bed.label} ({bed.status === 'EMPTY' ? '빈 베드' : '예약'})
+                      {bed.label} ({bed.status === 'EMPTY' ? '빈 베드' : '예약중'})
                     </option>
                   ))}
                 </select>
@@ -690,7 +782,7 @@ export default function AdmissionsPage() {
                 </select>
               </div>
 
-              {/* 입원일 (필수) */}
+              {/* 입원일 (필수) - 과거 날짜도 허용 (소급 입력) */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
                   입원일 <span className="text-red-500">*</span>
@@ -701,6 +793,16 @@ export default function AdmissionsPage() {
                   onChange={(e) => setForm({ ...form, admitDate: e.target.value })}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                 />
+                {form.admitDate && new Date(form.admitDate) < new Date(new Date().toISOString().slice(0, 10)) && (
+                  <p className="text-xs text-orange-600 mt-1">
+                    * 과거 날짜입니다. 소급 입력으로 처리됩니다.
+                  </p>
+                )}
+                {form.admitDate && new Date(form.admitDate) > new Date() && (
+                  <p className="text-xs text-blue-600 mt-1">
+                    * 미래 날짜입니다. 예약으로 처리됩니다.
+                  </p>
+                )}
               </div>
 
               {/* 퇴원예정일 (필수) */}

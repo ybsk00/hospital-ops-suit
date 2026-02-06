@@ -196,7 +196,8 @@ export default function LabApprovalsPage() {
 
   function handleDownloadPdf(analysisId: string) {
     if (!accessToken) return;
-    window.open(`${API_BASE}/api/lab-uploads/analyses/${analysisId}/export-pdf?token=${accessToken}`, '_blank');
+    // download=true 파라미터로 강제 다운로드
+    window.open(`${API_BASE}/api/lab-uploads/analyses/${analysisId}/export-pdf?token=${accessToken}&download=true`, '_blank');
   }
 
   function handlePrintPdf(analysisId: string) {

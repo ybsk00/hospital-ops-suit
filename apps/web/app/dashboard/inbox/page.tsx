@@ -149,8 +149,11 @@ export default function InboxPage() {
   // View mode: 'today' or 'month'
   const [viewMode, setViewMode] = useState<'today' | 'month'>('today');
 
-  // Type filter
-  const [typeFilter, setTypeFilter] = useState('LAB_APPROVED');
+  // Type filter - default empty to show ALL items
+  const [typeFilter, setTypeFilter] = useState('');
+
+  // Selected items for bulk operations
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // Today items
   const [todayItems, setTodayItems] = useState<InboxItem[]>([]);
@@ -322,7 +325,8 @@ export default function InboxPage() {
 
   function handleDownloadPdf(entityId: string) {
     if (!accessToken || !entityId) return;
-    window.open(`${API_BASE}/api/lab-uploads/analyses/${entityId}/export-pdf?token=${accessToken}`, '_blank');
+    // download=true 파라미터로 강제 다운로드
+    window.open(`${API_BASE}/api/lab-uploads/analyses/${entityId}/export-pdf?token=${accessToken}&download=true`, '_blank');
   }
 
   function handlePrintPdf(entityId: string) {
@@ -336,15 +340,39 @@ export default function InboxPage() {
     }
   }
 
+  // Toggle single item selection
+  function toggleSelectItem(itemId: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  }
+
+  // Toggle select all
+  function toggleSelectAll() {
+    const downloadableItems = todayItems.filter(item => item.entityType === 'LabAnalysis' && item.entityId);
+    if (selectedIds.size === downloadableItems.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(downloadableItems.map(item => item.id)));
+    }
+  }
+
   async function handleBulkDownload() {
     if (!accessToken || bulkDownloading) return;
 
+    // Get selected items that can be downloaded
     const downloadableItems = todayItems.filter(
-      item => item.type === 'LAB_APPROVED' && item.entityType === 'LabAnalysis' && item.entityId
+      item => selectedIds.has(item.id) && item.entityType === 'LabAnalysis' && item.entityId
     );
 
     if (downloadableItems.length === 0) {
-      alert('다운로드할 항목이 없습니다.');
+      alert('다운로드할 항목을 선택해주세요.');
       return;
     }
 
@@ -353,13 +381,14 @@ export default function InboxPage() {
     // Download each PDF sequentially with a small delay
     for (const item of downloadableItems) {
       if (item.entityId) {
-        window.open(`${API_BASE}/api/lab-uploads/analyses/${item.entityId}/export-pdf?token=${accessToken}`, '_blank');
+        window.open(`${API_BASE}/api/lab-uploads/analyses/${item.entityId}/export-pdf?token=${accessToken}&download=true`, '_blank');
         // Small delay between downloads
         await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
 
     setBulkDownloading(false);
+    setSelectedIds(new Set()); // Clear selection after download
   }
 
   function formatDate(dateStr: string): string {
@@ -388,10 +417,11 @@ export default function InboxPage() {
   const today = new Date().toISOString().slice(0, 10);
   const totalMonthCount = calendarData.reduce((sum, d) => sum + d.count, 0);
 
-  // Filter downloadable items for count
-  const downloadableCount = todayItems.filter(
-    item => item.type === 'LAB_APPROVED' && item.entityType === 'LabAnalysis' && item.entityId
-  ).length;
+  // Filter downloadable items for count (any item with LabAnalysis entity)
+  const downloadableItems = todayItems.filter(
+    item => item.entityType === 'LabAnalysis' && item.entityId
+  );
+  const downloadableCount = downloadableItems.length;
 
   return (
     <div>
@@ -486,17 +516,17 @@ export default function InboxPage() {
                   <div>
                     <p className="text-blue-100 text-sm">{formatDate(today)}</p>
                     <p className="text-4xl font-bold mt-1">{todayItems.length}건</p>
-                    <p className="text-blue-100 text-sm mt-1">오늘 승인된 검사결과</p>
+                    <p className="text-blue-100 text-sm mt-1">오늘 업무함 항목</p>
                   </div>
                   <div className="flex items-center gap-3">
                     {downloadableCount > 0 && (
                       <button
                         onClick={handleBulkDownload}
-                        disabled={bulkDownloading}
+                        disabled={bulkDownloading || selectedIds.size === 0}
                         className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition text-white font-medium disabled:opacity-50"
                       >
                         <Download size={18} />
-                        {bulkDownloading ? '다운로드 중...' : `전체 다운로드 (${downloadableCount}건)`}
+                        {bulkDownloading ? '다운로드 중...' : `선택 다운로드 (${selectedIds.size}건)`}
                       </button>
                     )}
                     <CheckCircle2 size={48} className="text-blue-200" />
@@ -504,35 +534,68 @@ export default function InboxPage() {
                 </div>
               </div>
 
+              {/* Select All Header */}
+              {downloadableCount > 0 && !todayLoading && (
+                <div className="flex items-center gap-3 mb-3 px-4 py-2 bg-slate-50 rounded-lg border border-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.size === downloadableCount && downloadableCount > 0}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-slate-600">
+                    전체 선택 ({selectedIds.size} / {downloadableCount}건)
+                  </span>
+                </div>
+              )}
+
               {/* Today Items List */}
               {todayLoading ? (
                 <div className="text-center py-12 text-slate-400">로딩 중...</div>
               ) : todayItems.length === 0 ? (
                 <div className="text-center py-12 text-slate-400">
                   <Inbox size={48} className="mx-auto mb-3 text-slate-300" />
-                  오늘 승인된 항목이 없습니다.
+                  오늘 업무함 항목이 없습니다.
                 </div>
               ) : (
                 <div className="space-y-2">
                   {todayItems.map((item) => {
                     const iconColor = typeIconColors[item.type] || 'text-slate-500 bg-slate-100';
-                    const canShowPdf = item.type === 'LAB_APPROVED' && item.entityType === 'LabAnalysis' && item.entityId;
+                    const canDownload = item.entityType === 'LabAnalysis' && item.entityId;
+                    const isSelected = selectedIds.has(item.id);
 
                     return (
                       <div
                         key={item.id}
-                        className="flex items-center justify-between p-4 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 transition"
+                        className={`flex items-center justify-between p-4 border rounded-lg bg-white hover:bg-slate-50 transition ${
+                          isSelected ? 'border-blue-300 bg-blue-50/30' : 'border-slate-200'
+                        }`}
                       >
+                        {/* Checkbox for downloadable items */}
+                        {canDownload && (
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelectItem(item.id)}
+                            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 mr-3 flex-shrink-0"
+                          />
+                        )}
+
                         <div
-                          onClick={() => canShowPdf && handleItemClick(item)}
-                          className={`flex items-center gap-3 flex-1 ${canShowPdf ? 'cursor-pointer' : ''}`}
+                          onClick={() => canDownload && handleItemClick(item)}
+                          className={`flex items-center gap-3 flex-1 ${canDownload ? 'cursor-pointer' : ''}`}
                         >
                           <div className={`flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center ${iconColor}`}>
                             <TypeIcon type={item.type} />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="font-medium text-slate-900 truncate">
-                              {item.title}
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-slate-900 truncate">
+                                {item.title}
+                              </span>
+                              <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-600 rounded">
+                                {typeLabels[item.type] || item.type}
+                              </span>
                             </div>
                             {item.summary && (
                               <div className="text-sm text-slate-500 truncate">
@@ -551,7 +614,7 @@ export default function InboxPage() {
                         </div>
 
                         {/* Individual Download Button */}
-                        {canShowPdf && (
+                        {canDownload && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -672,7 +735,7 @@ export default function InboxPage() {
                 <div className="space-y-2">
                   {dateItems.map((item) => {
                     const iconColor = typeIconColors[item.type] || 'text-slate-500 bg-slate-100';
-                    const canShowPdf = item.type === 'LAB_APPROVED' && item.entityType === 'LabAnalysis' && item.entityId;
+                    const canDownload = item.entityType === 'LabAnalysis' && item.entityId;
 
                     return (
                       <div
@@ -680,15 +743,20 @@ export default function InboxPage() {
                         className="flex items-center justify-between p-4 border border-slate-200 rounded-lg hover:bg-slate-50 transition"
                       >
                         <div
-                          onClick={() => canShowPdf && handleItemClick(item)}
-                          className={`flex items-center gap-3 flex-1 ${canShowPdf ? 'cursor-pointer' : ''}`}
+                          onClick={() => canDownload && handleItemClick(item)}
+                          className={`flex items-center gap-3 flex-1 ${canDownload ? 'cursor-pointer' : ''}`}
                         >
                           <div className={`flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center ${iconColor}`}>
                             <TypeIcon type={item.type} />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="font-medium text-slate-900 truncate">
-                              {item.title}
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-slate-900 truncate">
+                                {item.title}
+                              </span>
+                              <span className="text-xs px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded">
+                                {typeLabels[item.type] || item.type}
+                              </span>
                             </div>
                             {item.summary && (
                               <div className="text-sm text-slate-500 truncate">
@@ -697,7 +765,7 @@ export default function InboxPage() {
                             )}
                           </div>
                         </div>
-                        {canShowPdf && (
+                        {canDownload && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -719,7 +787,7 @@ export default function InboxPage() {
       )}
 
       {/* PDF Modal - Item Detail */}
-      {selectedItem && selectedItem.type === 'LAB_APPROVED' && selectedItem.entityId && (
+      {selectedItem && selectedItem.entityType === 'LabAnalysis' && selectedItem.entityId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl mx-4 max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
