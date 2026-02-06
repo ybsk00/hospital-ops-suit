@@ -1,0 +1,116 @@
+{
+  "app": {
+    "title": "Hospital Ops Suite",
+    "subtitle": "서울온케어 병원관리 시스템"
+  },
+  "nav": {
+    "dashboard": "대시보드",
+    "beds": "베드 관리",
+    "admissions": "입원 관리",
+    "procedures": "처치 관리",
+    "appointments": "외래 예약",
+    "homecare": "가정방문",
+    "inbox": "업무함",
+    "imports": "Import 현황",
+    "audit": "감사로그",
+    "admin": "관리자 설정",
+    "users": "사용자 관리",
+    "departments": "부서 관리",
+    "chatbot": "AI 어시스턴트"
+  },
+  "auth": {
+    "login": "로그인",
+    "logout": "로그아웃",
+    "loginId": "아이디",
+    "password": "비밀번호",
+    "loginFailed": "아이디 또는 비밀번호가 올바르지 않습니다.",
+    "accountLocked": "로그인 시도 횟수 초과. 10분 후 다시 시도해주세요.",
+    "sessionExpired": "세션이 만료되었습니다. 다시 로그인해주세요."
+  },
+  "common": {
+    "save": "저장",
+    "cancel": "취소",
+    "delete": "삭제",
+    "edit": "수정",
+    "create": "생성",
+    "search": "검색",
+    "filter": "필터",
+    "confirm": "확인",
+    "back": "뒤로",
+    "loading": "로딩 중...",
+    "noData": "데이터가 없습니다.",
+    "error": "오류가 발생했습니다.",
+    "success": "성공적으로 처리되었습니다.",
+    "versionConflict": "다른 사용자가 이미 변경했습니다. 새로고침 후 재시도하세요.",
+    "forbidden": "해당 기능에 대한 권한이 없습니다."
+  },
+  "bed": {
+    "status": {
+      "EMPTY": "빈 베드",
+      "OCCUPIED": "점유",
+      "RESERVED": "예약",
+      "CLEANING": "청소 중",
+      "ISOLATION": "격리",
+      "OUT_OF_ORDER": "사용불가"
+    }
+  },
+  "admission": {
+    "status": {
+      "ADMITTED": "입원중",
+      "DISCHARGE_PLANNED": "퇴원예정",
+      "TRANSFER_PLANNED": "전실예정",
+      "ON_LEAVE": "외출",
+      "DISCHARGED": "퇴원완료"
+    }
+  },
+  "procedure": {
+    "status": {
+      "SCHEDULED": "예정",
+      "IN_PROGRESS": "진행중",
+      "COMPLETED": "완료",
+      "ON_HOLD": "보류",
+      "CANCELLED": "취소"
+    }
+  },
+  "appointment": {
+    "status": {
+      "BOOKED": "예약됨",
+      "CHECKED_IN": "접수완료",
+      "COMPLETED": "진료완료",
+      "CANCELLED": "취소",
+      "NO_SHOW": "미방문",
+      "CHANGED": "변경됨"
+    }
+  },
+  "aiReport": {
+    "status": {
+      "DRAFT": "초안",
+      "AI_REVIEWED": "AI 검토완료",
+      "APPROVED": "승인완료",
+      "REJECTED": "반려",
+      "SENT": "전달완료",
+      "ACKED": "수신확인"
+    }
+  },
+  "inbox": {
+    "type": {
+      "RED_ALERT": "긴급 알림",
+      "ORANGE_ALERT": "주의 알림",
+      "LAB_ABNORMAL": "검사 이상치",
+      "REPORT_PENDING": "의견서 대기",
+      "SYNC_CONFLICT": "동기화 충돌",
+      "MANUAL_FLAG": "수동 플래그",
+      "BATCH_FAILURE": "배치 실패"
+    }
+  },
+  "chatbot": {
+    "title": "AI 어시스턴트",
+    "placeholder": "질문을 입력하세요...",
+    "quickActions": {
+      "todaySchedule": "오늘 스케줄",
+      "incompleteProcedures": "미완료 처치",
+      "emptyBeds": "빈 베드 현황",
+      "pendingReports": "승인 대기 의견서"
+    }
+  }
+}

@@ -1,0 +1,934 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================================
+// 부서 (Department)
+// ============================================================
+
+model Department {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  code      String   @unique
+  parentId  String?
+  parent    Department?  @relation("DeptTree", fields: [parentId], references: [id])
+  children  Department[] @relation("DeptTree")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  members     UserDepartment[]
+  permissions DepartmentPermission[]
+}
+
+// ============================================================
+// 사용자 역할
+// ============================================================
+
+enum UserRole {
+  SUPER_ADMIN
+  DEPT_ADMIN
+  DOCTOR
+  HEAD_NURSE
+  NURSE
+  STAFF
+  HOMECARE_STAFF
+  VIEWER
+}
+
+// ============================================================
+// 권한 리소스 / 액션
+// ============================================================
+
+enum PermissionResource {
+  BEDS
+  ADMISSIONS
+  PROCEDURES
+  APPOINTMENTS
+  HOMECARE_VISITS
+  QUESTIONNAIRES
+  LAB_RESULTS
+  LAB_UPLOADS
+  LAB_APPROVALS
+  AI_REPORTS
+  INBOX
+  AUDIT_LOGS
+  IMPORTS
+  USERS
+  DEPARTMENTS
+  CHATBOT
+  DASHBOARD
+}
+
+enum PermissionAction {
+  READ
+  WRITE
+  DELETE
+  APPROVE
+  EXPORT
+  ADMIN
+}
+
+model DepartmentPermission {
+  id           String             @id @default(uuid())
+  departmentId String
+  department   Department         @relation(fields: [departmentId], references: [id])
+  resource     PermissionResource
+  action       PermissionAction
+  scope        String             @default("OWN_DEPT")
+  conditions   Json?
+  createdAt    DateTime           @default(now())
+
+  @@unique([departmentId, resource, action])
+}
+
+// ============================================================
+// 사용자
+// ============================================================
+
+model User {
+  id           String    @id @default(uuid())
+  loginId      String    @unique
+  passwordHash String
+  name         String
+  phone        String?
+  email        String?
+  isActive     Boolean   @default(true)
+  isSuperAdmin Boolean   @default(false)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  departments           UserDepartment[]
+  attendingAdmissions   Admission[]            @relation("AttendingDoctor")
+  procedureExecutions   ProcedureExecution[]   @relation("Executor")
+  homecareVisits        HomecareVisit[]        @relation("HomecareStaff")
+  approvedReports       AiReport[]             @relation("Approver")
+  auditLogs             AuditLog[]             @relation("AuditActor")
+  inboxItems            InboxItem[]            @relation("InboxOwner")
+  resolvedConflicts     PatientIdentityConflict[] @relation("Resolver")
+  uploadedFiles         UploadedFile[]         @relation("Uploader")
+  labUploads            LabUpload[]            @relation("LabUploader")
+  labApprovals          LabApproval[]          @relation("LabApprover")
+  labAnalysisApprovals  LabAnalysis[]          @relation("LabAnalysisApprover")
+}
+
+model UserDepartment {
+  id           String     @id @default(uuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id])
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+  role         UserRole
+  isPrimary    Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([userId, departmentId])
+}
+
+// ============================================================
+// 환자
+// ============================================================
+
+enum PatientStatus {
+  ACTIVE
+  DECEASED
+  TRANSFERRED
+  INACTIVE
+}
+
+model Patient {
+  id           String        @id @default(uuid())
+  emrPatientId String        @unique
+  name         String
+  dob          DateTime
+  sex          String
+  phone        String?
+  status       PatientStatus @default(ACTIVE)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  deletedAt    DateTime?
+
+  admissions     Admission[]
+  appointments   Appointment[]
+  homecareVisits HomecareVisit[]
+  labResults     LabResult[]
+  labAnalyses    LabAnalysis[]
+  aiReports      AiReport[]
+}
+
+// ============================================================
+// 병동 / 호실 / 베드
+// ============================================================
+
+enum BedStatus {
+  EMPTY
+  OCCUPIED
+  RESERVED
+  CLEANING
+  ISOLATION
+  OUT_OF_ORDER
+}
+
+model Ward {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  floor     Int?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  rooms Room[]
+}
+
+model Room {
+  id        String   @id @default(uuid())
+  wardId    String
+  ward      Ward     @relation(fields: [wardId], references: [id])
+  name      String
+  capacity  Int      @default(1)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  beds Bed[]
+
+  @@unique([wardId, name])
+}
+
+model Bed {
+  id        String    @id @default(uuid())
+  roomId    String
+  room      Room      @relation(fields: [roomId], references: [id])
+  label     String
+  status    BedStatus @default(EMPTY)
+  version   Int       @default(0)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  currentAdmission Admission?      @relation("CurrentBed")
+  bedAssignments   BedAssignment[]
+
+  @@unique([roomId, label])
+}
+
+// ============================================================
+// 입원 에피소드
+// ============================================================
+
+enum AdmissionStatus {
+  ADMITTED
+  DISCHARGE_PLANNED
+  TRANSFER_PLANNED
+  ON_LEAVE
+  DISCHARGED
+  OTHER
+}
+
+model Admission {
+  id                   String          @id @default(uuid())
+  patientId            String
+  patient              Patient         @relation(fields: [patientId], references: [id])
+  admitDate            DateTime
+  plannedDischargeDate DateTime?
+  dischargeDate        DateTime?
+  attendingDoctorId    String
+  attendingDoctor      User            @relation("AttendingDoctor", fields: [attendingDoctorId], references: [id])
+  currentBedId         String?         @unique
+  currentBed           Bed?            @relation("CurrentBed", fields: [currentBedId], references: [id])
+  status               AdmissionStatus @default(ADMITTED)
+  syncConflictFlag     Boolean         @default(false)
+  notes                String?
+  version              Int             @default(0)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  deletedAt            DateTime?
+
+  bedAssignments BedAssignment[]
+  procedurePlans ProcedurePlan[]
+}
+
+model BedAssignment {
+  id          String    @id @default(uuid())
+  admissionId String
+  admission   Admission @relation(fields: [admissionId], references: [id])
+  bedId       String
+  bed         Bed       @relation(fields: [bedId], references: [id])
+  startAt     DateTime  @default(now())
+  endAt       DateTime?
+  changedBy   String
+  createdAt   DateTime  @default(now())
+}
+
+// ============================================================
+// 처치 / 비급여
+// ============================================================
+
+enum ProcedureStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  ON_HOLD
+  CANCELLED
+}
+
+model ProcedureCatalog {
+  id               String   @id @default(uuid())
+  name             String   @unique
+  category         String
+  defaultUnitPrice Decimal  @db.Decimal(12, 2)
+  requiredFields   Json?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  deletedAt        DateTime?
+
+  plans ProcedurePlan[]
+}
+
+model ProcedurePlan {
+  id                 String           @id @default(uuid())
+  admissionId        String
+  admission          Admission        @relation(fields: [admissionId], references: [id])
+  procedureCatalogId String
+  procedureCatalog   ProcedureCatalog @relation(fields: [procedureCatalogId], references: [id])
+  scheduleRule       Json
+  startDate          DateTime
+  endDate            DateTime?
+  notes              String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  deletedAt          DateTime?
+
+  executions ProcedureExecution[]
+}
+
+model ProcedureExecution {
+  id               String          @id @default(uuid())
+  planId           String
+  plan             ProcedurePlan   @relation(fields: [planId], references: [id])
+  scheduledAt      DateTime
+  executedAt       DateTime?
+  executedById     String?
+  executedBy       User?           @relation("Executor", fields: [executedById], references: [id])
+  status           ProcedureStatus @default(SCHEDULED)
+  appliedUnitPrice Decimal?        @db.Decimal(12, 2)
+  quantity         Decimal?        @db.Decimal(10, 4)
+  dose             String?
+  detailsJson      Json?
+  notes            String?
+  isLocked         Boolean         @default(false)
+  version          Int             @default(0)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  deletedAt        DateTime?
+}
+
+// ============================================================
+// 외래 예약
+// ============================================================
+
+enum AppointmentStatus {
+  BOOKED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  CHANGED
+}
+
+enum AppointmentSource {
+  EMR
+  INTERNAL
+}
+
+model Doctor {
+  id          String        @id @default(uuid())
+  userId      String?
+  emrDoctorId String?       @unique
+  name        String
+  specialty   String?
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+
+  appointments Appointment[]
+  clinicRooms  ClinicRoom[]
+}
+
+model ClinicRoom {
+  id        String        @id @default(uuid())
+  name      String        @unique
+  doctorId  String?
+  doctor    Doctor?       @relation(fields: [doctorId], references: [id])
+  isActive  Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  deletedAt DateTime?
+
+  appointments Appointment[]
+}
+
+model Appointment {
+  id                 String            @id @default(uuid())
+  emrAppointmentId   String?           @unique
+  patientId          String
+  patient            Patient           @relation(fields: [patientId], references: [id])
+  doctorId           String
+  doctor             Doctor            @relation(fields: [doctorId], references: [id])
+  clinicRoomId       String?
+  clinicRoom         ClinicRoom?       @relation(fields: [clinicRoomId], references: [id])
+  startAt            DateTime
+  endAt              DateTime
+  status             AppointmentStatus @default(BOOKED)
+  source             AppointmentSource @default(INTERNAL)
+  conflictFlag       Boolean           @default(false)
+  conflictResolvedBy String?
+  conflictResolvedAt DateTime?
+  notes              String?
+  version            Int               @default(0)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  deletedAt          DateTime?
+}
+
+// ============================================================
+// 가정방문 / 문진 / 검사 / 의견서
+// ============================================================
+
+enum VisitStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum RiskLevel {
+  NORMAL
+  ORANGE
+  RED
+}
+
+enum LabFlag {
+  NORMAL
+  HIGH
+  LOW
+  CRITICAL
+  UNDETERMINED
+}
+
+enum LabUploadStatus {
+  PENDING
+  ANALYZING
+  ANALYZED
+  FAILED
+}
+
+enum LabAnalysisStatus {
+  PENDING
+  PARSED
+  ANALYZED
+  APPROVED
+  FAILED
+}
+
+enum LabPriority {
+  EMERGENCY    // 응급실 내원
+  URGENT       // 빠른 시일내 병원 내원
+  RECHECK      // 재검사 요망
+  CAUTION      // 건강유의
+  NORMAL       // 특이사항 없음
+}
+
+enum LabApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AiReportStatus {
+  DRAFT
+  AI_REVIEWED
+  APPROVED
+  REJECTED
+  SENT
+  ACKED
+}
+
+model HomecareVisit {
+  id          String      @id @default(uuid())
+  patientId   String
+  patient     Patient     @relation(fields: [patientId], references: [id])
+  staffId     String
+  staff       User        @relation("HomecareStaff", fields: [staffId], references: [id])
+  scheduledAt DateTime
+  completedAt DateTime?
+  status      VisitStatus @default(SCHEDULED)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  deletedAt   DateTime?
+
+  questionnaires Questionnaire[]
+  aiReports      AiReport[]
+}
+
+model Questionnaire {
+  id             String        @id @default(uuid())
+  visitId        String
+  visit          HomecareVisit @relation(fields: [visitId], references: [id])
+  payloadJson    Json
+  riskLevel      RiskLevel     @default(NORMAL)
+  riskReason     String?
+  idempotencyKey String        @unique
+  submittedBy    String
+  submittedAt    DateTime      @default(now())
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
+}
+
+model LabResult {
+  id           String   @id @default(uuid())
+  patientId    String
+  patient      Patient  @relation(fields: [patientId], references: [id])
+  collectedAt  DateTime
+  testName     String
+  analyte      String
+  value        Decimal  @db.Decimal(12, 4)
+  unit         String?
+  refLow       Decimal? @db.Decimal(12, 4)
+  refHigh      Decimal? @db.Decimal(12, 4)
+  flag         LabFlag  @default(NORMAL)
+  flagReason   String?
+  sourceFileId String?
+  analysisId   String?
+  analysis     LabAnalysis? @relation(fields: [analysisId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+
+  @@index([patientId, collectedAt])
+  @@index([analysisId])
+}
+
+// ============================================================
+// 검사결과 업로드 / 분석 / 승인
+// ============================================================
+
+model LabUpload {
+  id            String          @id @default(uuid())
+  uploadedById  String
+  uploadedBy    User            @relation("LabUploader", fields: [uploadedById], references: [id])
+  fileName      String
+  storagePath   String
+  fileSize      Int
+  fileType      String          // csv, xlsx, pdf
+  uploadedDate  DateTime        @db.Date
+  status        LabUploadStatus @default(PENDING)
+  errorMessage  String?
+  createdAt     DateTime        @default(now())
+  deletedAt     DateTime?
+
+  analyses      LabAnalysis[]
+
+  @@index([uploadedDate, status])
+}
+
+model LabAnalysis {
+  id             String            @id @default(uuid())
+  uploadId       String
+  upload         LabUpload         @relation(fields: [uploadId], references: [id])
+  patientId      String?
+  patient        Patient?          @relation(fields: [patientId], references: [id])
+  patientName    String?           // 파일에서 추출한 원본 이름
+  emrPatientId   String?           // 파일에서 추출한 차트번호
+  parsedData     Json?             // 파싱된 검사 수치 전체
+  abnormalCount  Int               @default(0)
+  normalCount    Int               @default(0)
+  aiComment      String?           @db.Text   // AI 자동 생성 코멘트
+  aiCommentAt    DateTime?
+  doctorComment  String?           @db.Text   // 의사 수정 코멘트
+  priority       LabPriority       @default(NORMAL)  // 자동 분류 우선순위
+  stamp          String?           // 스탬프 텍스트
+  vectorId       String?           // 벡터DB 문서 ID
+  status         LabAnalysisStatus @default(PENDING)
+  errorMessage   String?
+  approvedById   String?           // 승인자 ID
+  approvedBy     User?             @relation("LabAnalysisApprover", fields: [approvedById], references: [id])
+  approvedAt     DateTime?         // 승인 일시
+  createdAt      DateTime          @default(now())
+  deletedAt      DateTime?
+
+  labResults     LabResult[]
+
+  @@index([uploadId])
+  @@index([patientId])
+  @@index([priority])
+  @@index([approvedAt])
+}
+
+model LabApproval {
+  id              String            @id @default(uuid())
+  uploadDate      DateTime          @db.Date
+  analysisIds     String[]          // 포함된 분석 ID 목록
+  patientSummary  Json?             // { totalPatients, abnormalPatients, ... }
+  aiSummary       String?           @db.Text
+  status          LabApprovalStatus @default(PENDING)
+  approvedById    String?
+  approvedBy      User?             @relation("LabApprover", fields: [approvedById], references: [id])
+  approvedAt      DateTime?
+  stampedAt       DateTime?
+  rejectionNote   String?
+  version         Int               @default(1)
+  createdAt       DateTime          @default(now())
+  deletedAt       DateTime?
+
+  @@unique([uploadDate])
+  @@index([status])
+}
+
+model UploadedFile {
+  id           String   @id @default(uuid())
+  originalName String
+  storagePath  String
+  mimeType     String
+  fileSize     Int
+  fileHash     String
+  uploadedById String
+  uploadedBy   User     @relation("Uploader", fields: [uploadedById], references: [id])
+  createdAt    DateTime @default(now())
+
+  sourceReports AiReport[] @relation("SourceFile")
+  outputReports AiReport[] @relation("OutputFile")
+}
+
+model AiReport {
+  id            String         @id @default(uuid())
+  patientId     String
+  patient       Patient        @relation(fields: [patientId], references: [id])
+  visitId       String?
+  visit         HomecareVisit? @relation(fields: [visitId], references: [id])
+  labBatchId    String?
+  status        AiReportStatus @default(DRAFT)
+  draftText     String?        @db.Text
+  reviewedText  String?        @db.Text
+  reviewChecks  Json?
+  approvedText  String?        @db.Text
+  approvedById  String?
+  approvedBy    User?          @relation("Approver", fields: [approvedById], references: [id])
+  approvedAt    DateTime?
+  rejectionNote String?
+  version       Int            @default(1)
+
+  sourceFileId String?
+  sourceFile   UploadedFile? @relation("SourceFile", fields: [sourceFileId], references: [id])
+  outputFileId String?
+  outputFile   UploadedFile? @relation("OutputFile", fields: [outputFileId], references: [id])
+  stampedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  deliveries ReportDelivery[]
+
+  @@index([labBatchId])
+  @@index([patientId, status])
+}
+
+model ReportDelivery {
+  id         String   @id @default(uuid())
+  reportId   String
+  report     AiReport @relation(fields: [reportId], references: [id])
+  fromUserId String
+  toUserId   String
+  channel    String   @default("SYSTEM")
+  sentAt     DateTime @default(now())
+  ackAt      DateTime?
+}
+
+// ============================================================
+// 업무함 (Inbox) / 알림
+// ============================================================
+
+enum InboxItemType {
+  RED_ALERT
+  ORANGE_ALERT
+  LAB_ABNORMAL
+  REPORT_PENDING
+  SYNC_CONFLICT
+  MANUAL_FLAG
+  BATCH_FAILURE
+}
+
+enum InboxItemStatus {
+  UNREAD
+  IN_REVIEW
+  RESOLVED
+}
+
+model InboxItem {
+  id         String          @id @default(uuid())
+  ownerId    String
+  owner      User            @relation("InboxOwner", fields: [ownerId], references: [id])
+  type       InboxItemType
+  status     InboxItemStatus @default(UNREAD)
+  title      String
+  summary    String?
+  entityType String?
+  entityId   String?
+  priority   Int             @default(0)
+  comment    String?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  resolvedAt DateTime?
+
+  escalations InboxEscalation[]
+}
+
+model InboxEscalation {
+  id            String    @id @default(uuid())
+  inboxItemId   String
+  inboxItem     InboxItem @relation(fields: [inboxItemId], references: [id])
+  escalatedToId String
+  escalatedAt   DateTime  @default(now())
+  reason        String
+}
+
+// ============================================================
+// Import / 배치 관리
+// ============================================================
+
+enum ImportStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAIL
+  QUARANTINED
+}
+
+enum ImportFileType {
+  INPATIENT
+  OUTPATIENT
+  LAB
+}
+
+model Import {
+  id         String         @id @default(uuid())
+  filePath   String
+  fileHash   String         @unique
+  fileType   ImportFileType
+  startedAt  DateTime?
+  finishedAt DateTime?
+  status     ImportStatus   @default(PENDING)
+  statsJson  Json?
+  createdAt  DateTime       @default(now())
+
+  errors    ImportError[]
+  conflicts PatientIdentityConflict[]
+}
+
+model ImportError {
+  id          String   @id @default(uuid())
+  importId    String
+  import_     Import   @relation(fields: [importId], references: [id])
+  errorCode   String
+  message     String
+  sheetName   String?
+  rowNumber   Int?
+  rawRowJson  Json?
+  detailsJson Json?
+  createdAt   DateTime @default(now())
+}
+
+model PatientIdentityConflict {
+  id           String    @id @default(uuid())
+  importId     String
+  import_      Import    @relation(fields: [importId], references: [id])
+  emrPatientId String
+  beforeJson   Json
+  afterJson    Json
+  status       String    @default("OPEN")
+  resolvedById String?
+  resolvedBy   User?     @relation("Resolver", fields: [resolvedById], references: [id])
+  resolvedAt   DateTime?
+  detectedAt   DateTime  @default(now())
+}
+
+// ============================================================
+// 감사로그
+// ============================================================
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorUserId String?
+  actor       User?    @relation("AuditActor", fields: [actorUserId], references: [id])
+  action      String
+  entityType  String
+  entityId    String
+  beforeJson  Json?
+  afterJson   Json?
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorUserId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// 모바일 링크 토큰
+// ============================================================
+
+model MobileAccessToken {
+  id        String    @id @default(uuid())
+  visitId   String
+  userId    String
+  token     String    @unique
+  pin       String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+// ============================================================
+// RAG 챗봇 임베딩
+// ============================================================
+
+model Embedding {
+  id         String   @id @default(uuid())
+  entityType String
+  entityId   String
+  chunkIndex Int      @default(0)
+  content    String   @db.Text
+  vector     Unsupported("vector(768)")
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([entityType, entityId])
+}
+
+model ChatSession {
+  id        String        @id @default(uuid())
+  userId    String
+  title     String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  messages ChatMessage[]
+}
+
+model ChatMessage {
+  id        String      @id @default(uuid())
+  sessionId String
+  session   ChatSession @relation(fields: [sessionId], references: [id])
+  role      String
+  content   String      @db.Text
+  metadata  Json?
+  createdAt DateTime    @default(now())
+}
+
+// ============================================================
+// 마케팅 챗봇 (환자용)
+// ============================================================
+
+enum MarketingContentType {
+  YOUTUBE
+  BLOG
+  FAQ
+  MANUAL
+}
+
+enum MarketingCategory {
+  CANCER
+  NERVE
+  GENERAL
+}
+
+model MarketingDocument {
+  id         String                @id @default(uuid())
+  content    String                @db.Text
+  metadata   Json?
+  vector     Unsupported("vector(768)")
+  type       MarketingContentType  @default(MANUAL)
+  category   MarketingCategory?
+  sourceUrl  String?
+  title      String?
+  isActive   Boolean               @default(true)
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
+  deletedAt  DateTime?
+
+  @@index([type])
+  @@index([category])
+}
+
+model HospitalFaq {
+  id         String              @id @default(uuid())
+  question   String              @db.Text
+  answer     String              @db.Text
+  metadata   Json?
+  vector     Unsupported("vector(768)")
+  category   MarketingCategory?
+  sourceUrl  String?
+  title      String?
+  isActive   Boolean             @default(true)
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+  deletedAt  DateTime?
+
+  @@index([category])
+}
+
+model PatientChatSession {
+  id        String               @id @default(uuid())
+  ipHash    String?
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  messages PatientChatMessage[]
+}
+
+model PatientChatMessage {
+  id         String             @id @default(uuid())
+  sessionId  String
+  session    PatientChatSession @relation(fields: [sessionId], references: [id])
+  role       String
+  content    String             @db.Text
+  category   MarketingCategory?
+  metadata   Json?
+  createdAt  DateTime           @default(now())
+
+  @@index([sessionId])
+}
+
+model ChatbotAnalytics {
+  id           String   @id @default(uuid())
+  sessionId    String?
+  query        String   @db.Text
+  category     String?
+  responseTime Int?
+  hadSources   Boolean  @default(false)
+  isBooking    Boolean  @default(false)
+  isFallback   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([category])
+}

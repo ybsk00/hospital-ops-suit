@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.next/
+.env
+.env.local
+*.log
+storage/originals/*
+storage/stamped/*
+!storage/originals/.gitkeep
+!storage/stamped/.gitkeep
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
