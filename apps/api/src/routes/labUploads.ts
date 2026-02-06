@@ -868,8 +868,9 @@ router.get(
         });
       }
 
-      // 항목명
-      page.drawText(truncateText(result.analyte || result.testName, 18), {
+      // 항목명 (null 안전 처리)
+      const testItemName = result.analyte || result.testName || 'Unknown';
+      page.drawText(truncateText(testItemName, 18), {
         x: colX + 5,
         y: tableY - 12,
         size: 9,
@@ -877,8 +878,9 @@ router.get(
       });
       colX += colWidths[0];
 
-      // 결과
-      page.drawText(String(result.value), {
+      // 결과 (Decimal to String 안전 변환)
+      const valueStr = result.value != null ? String(result.value) : '-';
+      page.drawText(valueStr, {
         x: colX + 5,
         y: tableY - 12,
         size: 9,
@@ -896,9 +898,9 @@ router.get(
       });
       colX += colWidths[2];
 
-      // 참고범위
-      const refRange = result.refLow && result.refHigh
-        ? `${result.refLow} - ${result.refHigh}`
+      // 참고범위 (Decimal to String 안전 변환)
+      const refRange = result.refLow != null && result.refHigh != null
+        ? `${String(result.refLow)} - ${String(result.refHigh)}`
         : '-';
       page.drawText(refRange, {
         x: colX + 5,

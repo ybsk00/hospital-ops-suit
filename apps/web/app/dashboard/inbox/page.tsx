@@ -146,19 +146,23 @@ function TypeIcon({ type, size = 18 }: { type: string; size?: number }) {
 export default function InboxPage() {
   const { accessToken } = useAuthStore();
 
-  // Calendar state
-  const [year, setYear] = useState(() => new Date().getFullYear());
-  const [month, setMonth] = useState(() => new Date().getMonth() + 1);
-  const [calendarData, setCalendarData] = useState<CalendarDay[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // View mode
-  const [viewMode, setViewMode] = useState<'month' | 'week' | 'day'>('month');
+  // View mode: 'today' or 'month'
+  const [viewMode, setViewMode] = useState<'today' | 'month'>('today');
 
   // Type filter
   const [typeFilter, setTypeFilter] = useState('LAB_APPROVED');
 
-  // Selected date modal
+  // Today items
+  const [todayItems, setTodayItems] = useState<InboxItem[]>([]);
+  const [todayLoading, setTodayLoading] = useState(true);
+
+  // Calendar state (for month view)
+  const [year, setYear] = useState(() => new Date().getFullYear());
+  const [month, setMonth] = useState(() => new Date().getMonth() + 1);
+  const [calendarData, setCalendarData] = useState<CalendarDay[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+
+  // Selected date modal (for month view)
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [dateItems, setDateItems] = useState<InboxItem[]>([]);
   const [dateLoading, setDateLoading] = useState(false);
@@ -166,11 +170,39 @@ export default function InboxPage() {
   // PDF modal
   const [selectedItem, setSelectedItem] = useState<InboxItem | null>(null);
 
-  /* ---------- Fetch calendar data --------------------------------- */
+  // Bulk download state
+  const [bulkDownloading, setBulkDownloading] = useState(false);
+
+  /* ---------- Fetch today items ------------------------------------- */
+
+  const fetchTodayItems = useCallback(async () => {
+    if (!accessToken) return;
+    setTodayLoading(true);
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const typeParam = typeFilter ? `?type=${typeFilter}` : '';
+      const res = await api<DateResponse>(`/api/inbox/by-date/${today}${typeParam}`, {
+        token: accessToken,
+      });
+      setTodayItems(res.data?.items || []);
+    } catch (err) {
+      console.error('Today items fetch error:', err);
+    } finally {
+      setTodayLoading(false);
+    }
+  }, [accessToken, typeFilter]);
+
+  useEffect(() => {
+    if (viewMode === 'today') {
+      fetchTodayItems();
+    }
+  }, [viewMode, fetchTodayItems]);
+
+  /* ---------- Fetch calendar data ----------------------------------- */
 
   const fetchCalendar = useCallback(async () => {
     if (!accessToken) return;
-    setLoading(true);
+    setCalendarLoading(true);
     try {
       const typeParam = typeFilter ? `&type=${typeFilter}` : '';
       const res = await api<CalendarResponse>(`/api/inbox/calendar?year=${year}&month=${month}${typeParam}`, {
@@ -180,15 +212,17 @@ export default function InboxPage() {
     } catch (err) {
       console.error('Calendar fetch error:', err);
     } finally {
-      setLoading(false);
+      setCalendarLoading(false);
     }
   }, [accessToken, year, month, typeFilter]);
 
   useEffect(() => {
-    fetchCalendar();
-  }, [fetchCalendar]);
+    if (viewMode === 'month') {
+      fetchCalendar();
+    }
+  }, [viewMode, fetchCalendar]);
 
-  /* ---------- Fetch date items ------------------------------------ */
+  /* ---------- Fetch date items -------------------------------------- */
 
   const fetchDateItems = useCallback(async (date: string) => {
     if (!accessToken) return;
@@ -206,7 +240,7 @@ export default function InboxPage() {
     }
   }, [accessToken, typeFilter]);
 
-  /* ---------- Calendar helpers ------------------------------------ */
+  /* ---------- Calendar helpers -------------------------------------- */
 
   function getDaysInMonth(y: number, m: number): number {
     return new Date(y, m, 0).getDate();
@@ -221,12 +255,10 @@ export default function InboxPage() {
     const firstDay = getFirstDayOfMonth(year, month);
     const days: Array<{ day: number; date: string; count: number } | null> = [];
 
-    // Empty slots for previous month
     for (let i = 0; i < firstDay; i++) {
       days.push(null);
     }
 
-    // Days in current month
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       const dayData = calendarData.find((c) => c.date === dateStr);
@@ -276,8 +308,10 @@ export default function InboxPage() {
         body: { status: newStatus },
         token: accessToken,
       });
-      // Refresh the date items
-      if (selectedDate) {
+      // Refresh items
+      if (viewMode === 'today') {
+        fetchTodayItems();
+      } else if (selectedDate) {
         fetchDateItems(selectedDate);
       }
       fetchCalendar();
@@ -302,6 +336,32 @@ export default function InboxPage() {
     }
   }
 
+  async function handleBulkDownload() {
+    if (!accessToken || bulkDownloading) return;
+
+    const downloadableItems = todayItems.filter(
+      item => item.type === 'LAB_APPROVED' && item.entityType === 'LabAnalysis' && item.entityId
+    );
+
+    if (downloadableItems.length === 0) {
+      alert('다운로드할 항목이 없습니다.');
+      return;
+    }
+
+    setBulkDownloading(true);
+
+    // Download each PDF sequentially with a small delay
+    for (const item of downloadableItems) {
+      if (item.entityId) {
+        window.open(`${API_BASE}/api/lab-uploads/analyses/${item.entityId}/export-pdf?token=${accessToken}`, '_blank');
+        // Small delay between downloads
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+
+    setBulkDownloading(false);
+  }
+
   function formatDate(dateStr: string): string {
     const d = new Date(dateStr);
     return d.toLocaleDateString('ko-KR', {
@@ -322,13 +382,16 @@ export default function InboxPage() {
     });
   }
 
-  /* ---------- Render ---------------------------------------------- */
+  /* ---------- Render ------------------------------------------------ */
 
   const calendarDays = generateCalendarDays();
   const today = new Date().toISOString().slice(0, 10);
+  const totalMonthCount = calendarData.reduce((sum, d) => sum + d.count, 0);
 
-  // Calculate totals
-  const totalCount = calendarData.reduce((sum, d) => sum + d.count, 0);
+  // Filter downloadable items for count
+  const downloadableCount = todayItems.filter(
+    item => item.type === 'LAB_APPROVED' && item.entityType === 'LabAnalysis' && item.entityId
+  ).length;
 
   return (
     <div>
@@ -336,10 +399,10 @@ export default function InboxPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">업무함</h1>
-          <p className="text-slate-500 mt-1">업무 알림과 미처리 항목을 달력으로 확인합니다.</p>
+          <p className="text-slate-500 mt-1">업무 알림과 승인된 검사결과를 확인합니다.</p>
         </div>
         <button
-          onClick={fetchCalendar}
+          onClick={() => viewMode === 'today' ? fetchTodayItems() : fetchCalendar()}
           className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition text-sm"
         >
           <RefreshCw size={16} />
@@ -347,25 +410,32 @@ export default function InboxPage() {
         </button>
       </div>
 
-      {/* View Mode & Type Filter */}
+      {/* View Mode Toggle & Filters */}
       <div className="bg-white rounded-xl border border-slate-200 mb-6">
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
           <div className="flex items-center gap-4">
-            {/* View Mode Tabs */}
+            {/* View Mode Toggle */}
             <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-              {(['day', 'week', 'month'] as const).map((mode) => (
-                <button
-                  key={mode}
-                  onClick={() => setViewMode(mode)}
-                  className={`px-4 py-1.5 text-sm font-medium rounded-md transition ${
-                    viewMode === mode
-                      ? 'bg-white text-slate-900 shadow-sm'
-                      : 'text-slate-500 hover:text-slate-700'
-                  }`}
-                >
-                  {mode === 'day' ? '일별' : mode === 'week' ? '주별' : '월별'}
-                </button>
-              ))}
+              <button
+                onClick={() => setViewMode('today')}
+                className={`px-4 py-1.5 text-sm font-medium rounded-md transition ${
+                  viewMode === 'today'
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                오늘
+              </button>
+              <button
+                onClick={() => setViewMode('month')}
+                className={`px-4 py-1.5 text-sm font-medium rounded-md transition ${
+                  viewMode === 'month'
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                월간
+              </button>
             </div>
 
             {/* Type Filter */}
@@ -380,106 +450,203 @@ export default function InboxPage() {
                 </option>
               ))}
             </select>
-
-            {/* Stats */}
-            <div className="text-sm text-slate-600">
-              이번 달: <span className="font-bold text-blue-600">{totalCount}</span>건
-            </div>
           </div>
 
-          {/* Month Navigation */}
-          <div className="flex items-center gap-4">
-            <button
-              onClick={handlePrevMonth}
-              className="p-2 hover:bg-slate-100 rounded-lg transition"
-            >
-              <ChevronLeft size={20} />
-            </button>
-            <div className="flex items-center gap-2 text-lg font-semibold text-slate-900">
-              <Calendar size={20} className="text-slate-400" />
-              {year}년 {month}월
+          {/* Month Navigation (only for month view) */}
+          {viewMode === 'month' && (
+            <div className="flex items-center gap-4">
+              <button
+                onClick={handlePrevMonth}
+                className="p-2 hover:bg-slate-100 rounded-lg transition"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <div className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+                <Calendar size={20} className="text-slate-400" />
+                {year}년 {month}월
+              </div>
+              <button
+                onClick={handleNextMonth}
+                className="p-2 hover:bg-slate-100 rounded-lg transition"
+              >
+                <ChevronRight size={20} />
+              </button>
             </div>
-            <button
-              onClick={handleNextMonth}
-              className="p-2 hover:bg-slate-100 rounded-lg transition"
-            >
-              <ChevronRight size={20} />
-            </button>
-          </div>
+          )}
         </div>
 
-        {/* Calendar Grid */}
+        {/* Content */}
         <div className="p-4">
-          {loading ? (
-            <div className="text-center py-12 text-slate-400">로딩 중...</div>
-          ) : (
+          {viewMode === 'today' ? (
+            /* ============ Today View ============ */
             <>
-              {/* Weekday Headers */}
-              <div className="grid grid-cols-7 gap-1 mb-2">
-                {WEEKDAYS.map((day, idx) => (
-                  <div
-                    key={day}
-                    className={`text-center text-sm font-medium py-2 ${
-                      idx === 0 ? 'text-red-500' : idx === 6 ? 'text-blue-500' : 'text-slate-600'
-                    }`}
-                  >
-                    {day}
+              {/* Today Summary Card */}
+              <div className="bg-gradient-to-r from-blue-500 to-indigo-600 rounded-xl p-6 mb-6 text-white">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-blue-100 text-sm">{formatDate(today)}</p>
+                    <p className="text-4xl font-bold mt-1">{todayItems.length}건</p>
+                    <p className="text-blue-100 text-sm mt-1">오늘 승인된 검사결과</p>
                   </div>
-                ))}
+                  <div className="flex items-center gap-3">
+                    {downloadableCount > 0 && (
+                      <button
+                        onClick={handleBulkDownload}
+                        disabled={bulkDownloading}
+                        className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition text-white font-medium disabled:opacity-50"
+                      >
+                        <Download size={18} />
+                        {bulkDownloading ? '다운로드 중...' : `전체 다운로드 (${downloadableCount}건)`}
+                      </button>
+                    )}
+                    <CheckCircle2 size={48} className="text-blue-200" />
+                  </div>
+                </div>
               </div>
 
-              {/* Day Cells */}
-              <div className="grid grid-cols-7 gap-1">
-                {calendarDays.map((dayData, idx) => {
-                  if (!dayData) {
-                    return <div key={`empty-${idx}`} className="min-h-24" />;
-                  }
+              {/* Today Items List */}
+              {todayLoading ? (
+                <div className="text-center py-12 text-slate-400">로딩 중...</div>
+              ) : todayItems.length === 0 ? (
+                <div className="text-center py-12 text-slate-400">
+                  <Inbox size={48} className="mx-auto mb-3 text-slate-300" />
+                  오늘 승인된 항목이 없습니다.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {todayItems.map((item) => {
+                    const iconColor = typeIconColors[item.type] || 'text-slate-500 bg-slate-100';
+                    const canShowPdf = item.type === 'LAB_APPROVED' && item.entityType === 'LabAnalysis' && item.entityId;
 
-                  const isToday = dayData.date === today;
-                  const hasData = dayData.count > 0;
-                  const dayOfWeek = (getFirstDayOfMonth(year, month) + dayData.day - 1) % 7;
-
-                  return (
-                    <div
-                      key={dayData.date}
-                      onClick={() => handleDateClick(dayData.date, dayData.count)}
-                      className={`min-h-24 border rounded-lg p-2 transition ${
-                        hasData
-                          ? 'cursor-pointer hover:bg-blue-50 hover:border-blue-300'
-                          : 'bg-slate-50/50'
-                      } ${isToday ? 'ring-2 ring-blue-500 ring-offset-1' : 'border-slate-200'}`}
-                    >
-                      <div className="flex items-start justify-between">
-                        <span
-                          className={`text-sm font-medium ${
-                            dayOfWeek === 0
-                              ? 'text-red-500'
-                              : dayOfWeek === 6
-                              ? 'text-blue-500'
-                              : 'text-slate-700'
-                          } ${isToday ? 'bg-blue-500 text-white w-6 h-6 rounded-full flex items-center justify-center' : ''}`}
+                    return (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between p-4 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 transition"
+                      >
+                        <div
+                          onClick={() => canShowPdf && handleItemClick(item)}
+                          className={`flex items-center gap-3 flex-1 ${canShowPdf ? 'cursor-pointer' : ''}`}
                         >
-                          {dayData.day}
-                        </span>
-                      </div>
-
-                      {hasData && (
-                        <div className="mt-2">
-                          <div className="bg-blue-100 text-blue-700 rounded px-2 py-1 text-xs font-medium text-center">
-                            {dayData.count}건
+                          <div className={`flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center ${iconColor}`}>
+                            <TypeIcon type={item.type} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-slate-900 truncate">
+                              {item.title}
+                            </div>
+                            {item.summary && (
+                              <div className="text-sm text-slate-500 truncate">
+                                {item.summary}
+                              </div>
+                            )}
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${statusColors[item.status]}`}>
+                                {statusLabels[item.status]}
+                              </span>
+                              <span className="text-xs text-slate-400">
+                                {formatDateTime(item.createdAt)}
+                              </span>
+                            </div>
                           </div>
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
+
+                        {/* Individual Download Button */}
+                        {canShowPdf && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDownloadPdf(item.entityId!);
+                            }}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-100 transition ml-3"
+                          >
+                            <Download size={14} />
+                            다운로드
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          ) : (
+            /* ============ Month View ============ */
+            <>
+              {/* Month Stats */}
+              <div className="mb-4 text-sm text-slate-600">
+                이번 달 총: <span className="font-bold text-blue-600">{totalMonthCount}</span>건
               </div>
+
+              {calendarLoading ? (
+                <div className="text-center py-12 text-slate-400">로딩 중...</div>
+              ) : (
+                <>
+                  {/* Weekday Headers */}
+                  <div className="grid grid-cols-7 gap-1 mb-2">
+                    {WEEKDAYS.map((day, idx) => (
+                      <div
+                        key={day}
+                        className={`text-center text-sm font-medium py-2 ${
+                          idx === 0 ? 'text-red-500' : idx === 6 ? 'text-blue-500' : 'text-slate-600'
+                        }`}
+                      >
+                        {day}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Day Cells */}
+                  <div className="grid grid-cols-7 gap-1">
+                    {calendarDays.map((dayData, idx) => {
+                      if (!dayData) {
+                        return <div key={`empty-${idx}`} className="min-h-20" />;
+                      }
+
+                      const isToday = dayData.date === today;
+                      const hasData = dayData.count > 0;
+                      const dayOfWeek = (getFirstDayOfMonth(year, month) + dayData.day - 1) % 7;
+
+                      return (
+                        <div
+                          key={dayData.date}
+                          onClick={() => handleDateClick(dayData.date, dayData.count)}
+                          className={`min-h-20 border rounded-lg p-2 transition ${
+                            hasData
+                              ? 'cursor-pointer hover:bg-blue-50 hover:border-blue-300 bg-blue-50/30'
+                              : 'bg-slate-50/50'
+                          } ${isToday ? 'ring-2 ring-blue-500 ring-offset-1' : 'border-slate-200'}`}
+                        >
+                          <div className="flex items-start justify-between">
+                            <span
+                              className={`text-sm font-medium ${
+                                dayOfWeek === 0
+                                  ? 'text-red-500'
+                                  : dayOfWeek === 6
+                                  ? 'text-blue-500'
+                                  : 'text-slate-700'
+                              } ${isToday ? 'bg-blue-500 text-white w-6 h-6 rounded-full flex items-center justify-center' : ''}`}
+                            >
+                              {dayData.day}
+                            </span>
+                          </div>
+
+                          {hasData && (
+                            <div className="mt-1 text-center">
+                              <span className="text-2xl font-bold text-blue-600">{dayData.count}</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </>
           )}
         </div>
       </div>
 
-      {/* Date Modal - Item List */}
+      {/* Date Modal - Item List (for month view) */}
       {selectedDate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
@@ -510,36 +677,36 @@ export default function InboxPage() {
                     return (
                       <div
                         key={item.id}
-                        onClick={() => canShowPdf && handleItemClick(item)}
-                        className={`flex items-center gap-3 p-4 border border-slate-200 rounded-lg transition ${
-                          canShowPdf ? 'cursor-pointer hover:bg-slate-50' : ''
-                        }`}
+                        className="flex items-center justify-between p-4 border border-slate-200 rounded-lg hover:bg-slate-50 transition"
                       >
-                        <div className={`flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center ${iconColor}`}>
-                          <TypeIcon type={item.type} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium text-slate-900 truncate">
-                            {item.title}
+                        <div
+                          onClick={() => canShowPdf && handleItemClick(item)}
+                          className={`flex items-center gap-3 flex-1 ${canShowPdf ? 'cursor-pointer' : ''}`}
+                        >
+                          <div className={`flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center ${iconColor}`}>
+                            <TypeIcon type={item.type} />
                           </div>
-                          {item.summary && (
-                            <div className="text-sm text-slate-500 truncate">
-                              {item.summary}
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-slate-900 truncate">
+                              {item.title}
                             </div>
-                          )}
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${statusColors[item.status]}`}>
-                              {statusLabels[item.status]}
-                            </span>
-                            <span className="text-xs text-slate-400">
-                              {formatDateTime(item.createdAt)}
-                            </span>
+                            {item.summary && (
+                              <div className="text-sm text-slate-500 truncate">
+                                {item.summary}
+                              </div>
+                            )}
                           </div>
                         </div>
                         {canShowPdf && (
-                          <div className="flex-shrink-0">
-                            <FileText size={20} className="text-blue-500" />
-                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDownloadPdf(item.entityId!);
+                            }}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-100 transition ml-2"
+                          >
+                            <Download size={14} />
+                          </button>
                         )}
                       </div>
                     );

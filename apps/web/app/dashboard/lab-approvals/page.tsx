@@ -14,7 +14,6 @@ import {
   FileText,
   Printer,
   CheckCircle2,
-  AlertTriangle,
 } from 'lucide-react';
 
 /* ------------------------------------------------------------------ */
@@ -89,9 +88,6 @@ export default function LabApprovalsPage() {
   const [calendarData, setCalendarData] = useState<CalendarDay[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // View mode
-  const [viewMode, setViewMode] = useState<'month' | 'week' | 'day'>('month');
-
   // Selected date modal
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [dateAnalyses, setDateAnalyses] = useState<AnalysisItem[]>([]);
@@ -153,12 +149,10 @@ export default function LabApprovalsPage() {
     const firstDay = getFirstDayOfMonth(year, month);
     const days: Array<{ day: number; date: string; count: number } | null> = [];
 
-    // Empty slots for previous month
     for (let i = 0; i < firstDay; i++) {
       days.push(null);
     }
 
-    // Days in current month
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       const dayData = calendarData.find((c) => c.date === dateStr);
@@ -240,6 +234,7 @@ export default function LabApprovalsPage() {
 
   const calendarDays = generateCalendarDays();
   const today = new Date().toISOString().slice(0, 10);
+  const totalApproved = calendarData.reduce((sum, d) => sum + d.count, 0);
 
   return (
     <div>
@@ -247,7 +242,7 @@ export default function LabApprovalsPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">검사결과 승인 현황</h1>
-          <p className="text-slate-500 mt-1">승인된 검사결과를 달력으로 확인합니다.</p>
+          <p className="text-slate-500 mt-1">승인된 검사결과를 월별로 확인합니다.</p>
         </div>
         <button
           onClick={fetchCalendar}
@@ -258,44 +253,37 @@ export default function LabApprovalsPage() {
         </button>
       </div>
 
-      {/* View Mode Tabs */}
-      <div className="bg-white rounded-xl border border-slate-200 mb-6">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
-          <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-            {(['day', 'week', 'month'] as const).map((mode) => (
-              <button
-                key={mode}
-                onClick={() => setViewMode(mode)}
-                className={`px-4 py-1.5 text-sm font-medium rounded-md transition ${
-                  viewMode === mode
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                {mode === 'day' ? '일별' : mode === 'week' ? '주별' : '월별'}
-              </button>
-            ))}
+      {/* Monthly Summary Card */}
+      <div className="bg-gradient-to-r from-green-500 to-emerald-600 rounded-xl p-6 mb-6 text-white">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-green-100 text-sm">{year}년 {month}월 승인 현황</p>
+            <p className="text-4xl font-bold mt-1">{totalApproved}건</p>
           </div>
+          <CheckCircle2 size={48} className="text-green-200" />
+        </div>
+      </div>
 
-          {/* Month Navigation */}
-          <div className="flex items-center gap-4">
-            <button
-              onClick={handlePrevMonth}
-              className="p-2 hover:bg-slate-100 rounded-lg transition"
-            >
-              <ChevronLeft size={20} />
-            </button>
-            <div className="flex items-center gap-2 text-lg font-semibold text-slate-900">
-              <Calendar size={20} className="text-slate-400" />
-              {year}년 {month}월
-            </div>
-            <button
-              onClick={handleNextMonth}
-              className="p-2 hover:bg-slate-100 rounded-lg transition"
-            >
-              <ChevronRight size={20} />
-            </button>
+      {/* Calendar */}
+      <div className="bg-white rounded-xl border border-slate-200">
+        {/* Month Navigation */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+          <button
+            onClick={handlePrevMonth}
+            className="p-2 hover:bg-slate-100 rounded-lg transition"
+          >
+            <ChevronLeft size={20} />
+          </button>
+          <div className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+            <Calendar size={20} className="text-slate-400" />
+            {year}년 {month}월
           </div>
+          <button
+            onClick={handleNextMonth}
+            className="p-2 hover:bg-slate-100 rounded-lg transition"
+          >
+            <ChevronRight size={20} />
+          </button>
         </div>
 
         {/* Calendar Grid */}
@@ -322,7 +310,7 @@ export default function LabApprovalsPage() {
               <div className="grid grid-cols-7 gap-1">
                 {calendarDays.map((dayData, idx) => {
                   if (!dayData) {
-                    return <div key={`empty-${idx}`} className="min-h-24" />;
+                    return <div key={`empty-${idx}`} className="min-h-20" />;
                   }
 
                   const isToday = dayData.date === today;
@@ -333,9 +321,9 @@ export default function LabApprovalsPage() {
                     <div
                       key={dayData.date}
                       onClick={() => handleDateClick(dayData.date, dayData.count)}
-                      className={`min-h-24 border rounded-lg p-2 transition ${
+                      className={`min-h-20 border rounded-lg p-2 transition ${
                         hasData
-                          ? 'cursor-pointer hover:bg-green-50 hover:border-green-300'
+                          ? 'cursor-pointer hover:bg-green-50 hover:border-green-300 bg-green-50/30'
                           : 'bg-slate-50/50'
                       } ${isToday ? 'ring-2 ring-blue-500 ring-offset-1' : 'border-slate-200'}`}
                     >
@@ -354,10 +342,8 @@ export default function LabApprovalsPage() {
                       </div>
 
                       {hasData && (
-                        <div className="mt-2">
-                          <div className="bg-green-100 text-green-700 rounded px-2 py-1 text-xs font-medium text-center">
-                            {dayData.count}건
-                          </div>
+                        <div className="mt-1 text-center">
+                          <span className="text-2xl font-bold text-green-600">{dayData.count}</span>
                         </div>
                       )}
                     </div>
@@ -407,20 +393,15 @@ export default function LabApprovalsPage() {
                           <div className="font-medium text-slate-900">
                             {analysis.patientName || '환자'}
                           </div>
-                          <div className="text-sm text-slate-500">
-                            {analysis.emrPatientId || analysis.patient?.emrPatientId || '-'}
-                          </div>
+                          {analysis.stamp && (
+                            <div className={`text-xs mt-0.5 px-2 py-0.5 rounded inline-block ${PRIORITY_COLORS[analysis.priority] || 'bg-slate-100'}`}>
+                              {analysis.stamp}
+                            </div>
+                          )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {analysis.priority && analysis.priority !== 'NORMAL' && (
-                          <span className={`px-2 py-1 text-xs font-medium rounded border ${PRIORITY_COLORS[analysis.priority] || ''}`}>
-                            {PRIORITY_LABELS[analysis.priority] || analysis.priority}
-                          </span>
-                        )}
-                        <div className="text-xs text-slate-500">
-                          {analysis.approvedBy?.name}
-                        </div>
+                      <div className="text-xs text-slate-500">
+                        {analysis.approvedBy?.name}
                       </div>
                     </div>
                   ))}
@@ -431,7 +412,7 @@ export default function LabApprovalsPage() {
         </div>
       )}
 
-      {/* PDF Modal - Analysis Detail */}
+      {/* PDF Modal */}
       {selectedAnalysis && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl mx-4 max-h-[90vh] flex flex-col">
@@ -440,10 +421,9 @@ export default function LabApprovalsPage() {
                 <FileText size={24} className="text-blue-500" />
                 <div>
                   <h3 className="text-lg font-bold text-slate-900">
-                    검사결과 - {selectedAnalysis.patientName}
+                    {selectedAnalysis.patientName}
                   </h3>
                   <p className="text-sm text-slate-500">
-                    {selectedAnalysis.emrPatientId || '-'} |
                     승인: {selectedAnalysis.approvedBy?.name} ({selectedAnalysis.approvedAt ? formatDateTime(selectedAnalysis.approvedAt) : '-'})
                   </p>
                 </div>
@@ -456,48 +436,13 @@ export default function LabApprovalsPage() {
               </button>
             </div>
 
-            {/* Priority Stamp at Top */}
-            {selectedAnalysis.priority && selectedAnalysis.priority !== 'NORMAL' && (
-              <div className={`mx-6 mt-4 p-4 rounded-lg border-2 text-center ${PRIORITY_COLORS[selectedAnalysis.priority]}`}>
-                <div className="text-lg font-bold">
-                  {selectedAnalysis.stamp || PRIORITY_LABELS[selectedAnalysis.priority]}
-                </div>
-              </div>
-            )}
-
-            {/* AI Comment */}
-            {selectedAnalysis.aiComment && (
-              <div className="mx-6 mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                <div className="flex items-center gap-2 text-amber-700 font-medium mb-2">
-                  <AlertTriangle size={16} />
-                  AI 분석 소견
-                </div>
-                <div className="text-sm text-amber-900 whitespace-pre-wrap">
-                  {selectedAnalysis.aiComment}
-                </div>
-              </div>
-            )}
-
-            {/* PDF Preview Area */}
-            <div className="flex-1 overflow-hidden p-6">
-              <div className="bg-slate-100 rounded-lg h-full flex items-center justify-center">
-                <iframe
-                  src={`${API_BASE}/api/lab-uploads/analyses/${selectedAnalysis.id}/export-pdf?token=${accessToken}`}
-                  className="w-full h-[400px] rounded-lg border border-slate-200"
-                  title="PDF Preview"
-                />
-              </div>
-            </div>
-
-            {/* Approval Info */}
-            <div className="px-6 py-3 bg-green-50 border-t border-green-100 flex items-center justify-between">
-              <div className="flex items-center gap-2 text-green-700">
-                <CheckCircle2 size={18} />
-                <span className="font-medium">{selectedAnalysis.approvedBy?.name}</span>님이 승인
-              </div>
-              <div className="text-sm text-green-600">
-                {selectedAnalysis.approvedAt ? formatDateTime(selectedAnalysis.approvedAt) : ''}
-              </div>
+            {/* PDF Preview */}
+            <div className="flex-1 overflow-hidden p-4">
+              <iframe
+                src={`${API_BASE}/api/lab-uploads/analyses/${selectedAnalysis.id}/export-pdf?token=${accessToken}`}
+                className="w-full h-[500px] rounded-lg border border-slate-200"
+                title="PDF Preview"
+              />
             </div>
 
             {/* Action Buttons */}
@@ -514,7 +459,7 @@ export default function LabApprovalsPage() {
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
               >
                 <Download size={16} />
-                PDF 다운로드
+                다운로드
               </button>
             </div>
           </div>
