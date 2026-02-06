@@ -1,0 +1,94 @@
+steps:
+  # ============================================================
+  # Build API
+  # ============================================================
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-api'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/hospital-ops-api:$COMMIT_SHA', '-f', 'apps/api/Dockerfile', 'apps/api']
+
+  # ============================================================
+  # Build Web
+  # ============================================================
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-web'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/hospital-ops-web:$COMMIT_SHA', '-f', 'apps/web/Dockerfile', 'apps/web']
+    waitFor: ['-']  # Run in parallel with API build
+
+  # ============================================================
+  # Push API
+  # ============================================================
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-api'
+    args: ['push', 'gcr.io/$PROJECT_ID/hospital-ops-api:$COMMIT_SHA']
+    waitFor: ['build-api']
+
+  # ============================================================
+  # Push Web
+  # ============================================================
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-web'
+    args: ['push', 'gcr.io/$PROJECT_ID/hospital-ops-web:$COMMIT_SHA']
+    waitFor: ['build-web']
+
+  # ============================================================
+  # Deploy API to Cloud Run
+  # ============================================================
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-api'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'hospital-ops-api'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/hospital-ops-api:$COMMIT_SHA'
+      - '--region'
+      - 'asia-northeast3'
+      - '--allow-unauthenticated'
+      - '--min-instances'
+      - '0'
+      - '--max-instances'
+      - '2'
+      - '--memory'
+      - '1Gi'
+      - '--cpu'
+      - '1'
+      - '--timeout'
+      - '300'
+    waitFor: ['push-api']
+
+  # ============================================================
+  # Deploy Web to Cloud Run
+  # ============================================================
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-web'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'hospital-ops-web'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/hospital-ops-web:$COMMIT_SHA'
+      - '--region'
+      - 'asia-northeast3'
+      - '--allow-unauthenticated'
+      - '--min-instances'
+      - '0'
+      - '--max-instances'
+      - '2'
+      - '--memory'
+      - '1Gi'
+      - '--cpu'
+      - '1'
+      - '--timeout'
+      - '300'
+      - '--set-env-vars'
+      - 'NEXT_PUBLIC_API_URL=https://hospital-ops-api-783253438610.asia-northeast3.run.app'
+    waitFor: ['push-web']
+
+images:
+  - 'gcr.io/$PROJECT_ID/hospital-ops-api:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/hospital-ops-web:$COMMIT_SHA'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
