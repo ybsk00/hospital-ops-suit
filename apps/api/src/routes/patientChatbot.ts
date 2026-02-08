@@ -216,8 +216,8 @@ router.post(
         }
       }
 
-      // 6. 내원 의사 감지
-      const visitIntent = gen.detectVisitIntent(query, history);
+      // 6. 내원 의사 감지 (하이브리드: 키워드 + LLM)
+      const visitIntent = await gen.detectVisitIntent(query, history);
       if (visitIntent === 'strong') {
         isBooking = true;
         res.write('\n\n__BOOKING__');
