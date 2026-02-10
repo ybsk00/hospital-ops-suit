@@ -895,7 +895,7 @@ router.get(
     const rHeaders = ['보험코드', '검사명', '결과', '판정', '참고치', '검체'];
     const rRowH = 15;
     const rHeaderH = 18;
-    const minYForTable = 90;
+    const minYForTable = 120;
 
     // 헬퍼: 결과 테이블 헤더
     const drawResultHeader = (pg: typeof currentPage, startY: number) => {
@@ -1039,37 +1039,72 @@ router.get(
       }
     }
 
-    // ── 푸터 (검사자 / 보고자 + 기관 정보) ──
-    if (y < 100) {
+    // ── 이원의료재단 스타일 푸터 ──
+    if (y < 130) {
       currentPage = pdfDoc.addPage([pageW, pageH]);
       y = pageH - margin;
     }
 
-    const footerY = Math.min(y - 10, 75);
-    // 검사자 / 보고자 행
-    currentPage.drawLine({ start: { x: margin, y: footerY + 16 }, end: { x: margin + contentW, y: footerY + 16 }, thickness: 0.5, color: black });
-    currentPage.drawText('검사자', { x: margin + 4, y: footerY + 3, size: 8, font: boldFont, color: black });
-    currentPage.drawText('보고자', { x: margin + contentW / 2, y: footerY + 3, size: 8, font: boldFont, color: black });
-    if (approverName) {
-      const repLabel = approverName;
-      const repW = font.widthOfTextAtSize(repLabel, 8);
-      currentPage.drawText(repLabel, { x: margin + contentW / 2 + 40, y: footerY + 3, size: 8, font, color: black });
-    }
-    currentPage.drawLine({ start: { x: margin, y: footerY - 2 }, end: { x: margin + contentW, y: footerY - 2 }, thickness: 0.5, color: black });
+    const footerTop = Math.min(y - 10, 105);
+    const logoAreaW = 95;
+    const infoX = margin + logoAreaW;
+    const infoAreaW = contentW - logoAreaW;
 
-    // 기관 바
-    const barY = footerY - 16;
-    currentPage.drawRectangle({ x: margin, y: barY - 2, width: contentW, height: 14, color: rgb(0.95, 0.95, 0.95) });
-    currentPage.drawText('서울온케어의원', { x: margin + 4, y: barY + 1, size: 7, font: boldFont, color: black });
-    currentPage.drawText('TEL 031-000-0000  |  www.seouloncare.com', {
-      x: margin + contentW - 200, y: barY + 1, size: 7, font, color: gray,
-    });
+    // 상단 구분선
+    currentPage.drawLine({ start: { x: margin, y: footerTop }, end: { x: margin + contentW, y: footerTop }, thickness: 0.5, color: black });
+
+    // ── 좌측: eo 로고 ──
+    const eoneGreen = rgb(0.15, 0.45, 0.25);
+    const eR = 7;
+    const eCX = margin + 16;
+    const eCY = footerTop - 15;
+    // 'e' - 원형 + 가운데 바 + 우하단 개방
+    currentPage.drawCircle({ x: eCX, y: eCY, size: eR, borderColor: eoneGreen, borderWidth: 2.2 });
+    currentPage.drawLine({ start: { x: eCX - 1, y: eCY }, end: { x: eCX + eR + 1, y: eCY }, thickness: 1.8, color: eoneGreen });
+    currentPage.drawRectangle({ x: eCX + 2, y: eCY - eR - 1, width: eR, height: eR - 1, color: rgb(1, 1, 1) });
+    // 'o' - 원형
+    const oCX = eCX + eR * 2 + 5;
+    currentPage.drawCircle({ x: oCX, y: eCY, size: eR, borderColor: eoneGreen, borderWidth: 2.2 });
+
+    // 이원의료재단 텍스트
+    currentPage.drawText('이원의료재단', { x: margin + 4, y: footerTop - 32, size: 7.5, font: boldFont, color: black });
+    currentPage.drawText('EONE Laboratories', { x: margin + 4, y: footerTop - 42, size: 6, font, color: gray });
+    currentPage.drawText('V.2407-A4', { x: margin + 4, y: footerTop - 51, size: 5.5, font, color: gray });
+
+    // 세로 구분선 (로고 | 내용)
+    currentPage.drawLine({ start: { x: infoX - 5, y: footerTop }, end: { x: infoX - 5, y: footerTop - 45 }, thickness: 0.3, color: lightGray });
+
+    // ── 우측: 검사자 / 보고자 (서명 없음) ──
+    const fRow1Y = footerTop - 14;
+    currentPage.drawText('검사자', { x: infoX, y: fRow1Y, size: 8, font: boldFont, color: black });
+    currentPage.drawText('보고자', { x: infoX + infoAreaW / 2, y: fRow1Y, size: 8, font: boldFont, color: black });
+    if (approverName) {
+      currentPage.drawText(approverName, { x: infoX + infoAreaW / 2 + 35, y: fRow1Y, size: 8, font, color: black });
+    }
+
+    // 중간 구분선
+    currentPage.drawLine({ start: { x: infoX - 5, y: fRow1Y - 8 }, end: { x: margin + contentW, y: fRow1Y - 8 }, thickness: 0.3, color: lightGray });
+
+    // 주소/연락처
+    const fRow2Y = fRow1Y - 22;
+    currentPage.drawText('인천광역시 연수구 하모니로 291   검사기관번호 41341473', { x: infoX, y: fRow2Y, size: 6.5, font, color: black });
+    currentPage.drawText('TEL 1600-0021   www.eonelab.co.kr', { x: infoX + infoAreaW / 2, y: fRow2Y, size: 6.5, font, color: black });
+
+    // 하단 구분선
+    const footerBottom = footerTop - 48;
+    currentPage.drawLine({ start: { x: margin, y: footerBottom }, end: { x: margin + contentW, y: footerBottom }, thickness: 0.5, color: black });
+
+    // 인증 문구
+    currentPage.drawText(
+      '대한진단검사의학회 \u00B7 진단검사의학재단의 우수검사실 산업인증과 미국의 CAP 인증을 받은 검사기관입니다.',
+      { x: margin + 10, y: footerBottom - 13, size: 6, font, color: gray },
+    );
 
     // ── 승인 스탬프 (우측 하단) ──
     if (analysis.approvedAt && analysis.approvedBy) {
       const stampSize = 55;
       const stampX = pageW - margin - stampSize - 5;
-      const stampCY = footerY + 50;
+      const stampCY = footerTop + 40;
 
       currentPage.drawCircle({
         x: stampX + stampSize / 2,
