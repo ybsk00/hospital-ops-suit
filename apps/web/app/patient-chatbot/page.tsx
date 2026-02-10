@@ -170,6 +170,7 @@ export default function PatientChatbotPage() {
           };
         });
         setRelatedVideos(videos);
+        setShowMobileVideos(true);
       }
     } catch (err) {
       console.error('Chat error:', err);
@@ -219,7 +220,7 @@ export default function PatientChatbotPage() {
         </div>
 
         {/* 채팅 영역 */}
-        <div className="flex-1 flex flex-col h-full relative z-10 pt-16 md:pt-0">
+        <div className="flex-1 flex flex-col min-h-0 relative z-10 pt-16 md:pt-0">
           {/* 데스크탑 헤더 */}
           <div className="hidden md:flex justify-between items-center p-6 border-b border-white/40 bg-white/40 backdrop-blur-md relative z-20">
             <div className="flex items-center gap-3">
@@ -233,7 +234,7 @@ export default function PatientChatbotPage() {
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
                   </span>
-                  <span className="text-xs text-gray-600 font-medium">AI 상담실장 온케어봇 대기중</span>
+                  <span className="text-xs text-gray-600 font-medium">상담실장 온케어봇 대기중</span>
                 </div>
               </div>
             </div>
@@ -280,9 +281,19 @@ export default function PatientChatbotPage() {
 
                       {message.role === 'assistant' ? (
                         <div className="chat-bubble-glass p-5 rounded-2xl rounded-tl-none shadow-lg text-sm leading-relaxed text-gray-800">
-                          <p className="whitespace-pre-wrap">{message.content}</p>
-                          {message.id !== 'welcome' && (
-                            <p className="text-xs text-gray-500 border-t border-gray-400/20 pt-2 mt-2">본 상담 내용은 참고용이며, 의학적 진단이나 처방을 대신할 수 없습니다.</p>
+                          {message.content ? (
+                            <>
+                              <p className="whitespace-pre-wrap">{message.content}</p>
+                              {message.id !== 'welcome' && (
+                                <p className="text-xs text-gray-500 border-t border-gray-400/20 pt-2 mt-2">본 상담 내용은 참고용이며, 의학적 진단이나 처방을 대신할 수 없습니다.</p>
+                              )}
+                            </>
+                          ) : (
+                            <div className="typing-indicator">
+                              <span></span>
+                              <span></span>
+                              <span></span>
+                            </div>
                           )}
                         </div>
                       ) : (
@@ -328,7 +339,7 @@ export default function PatientChatbotPage() {
                 </div>
               ))}
 
-              {loading && (
+              {loading && !messages.some((m) => m.role === 'assistant' && !m.content) && (
                 <div className="flex gap-4 max-w-[85%]">
                   <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#E0F2F1] to-[#B2DFDB] flex-shrink-0 flex items-center justify-center shadow-lg mt-1 ring-2 ring-white/40 overflow-hidden border border-white/50">
                     <img alt="Oncare Bot" className="w-full h-full object-cover scale-110 translate-y-1" src={BOT_AVATAR} />

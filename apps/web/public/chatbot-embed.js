@@ -22,7 +22,7 @@
     '  position: fixed;',
     '  top: 0; left: 0; right: 0; bottom: 0;',
     '  z-index: ' + (Z_INDEX - 2) + ';',
-    '  background: rgba(0, 0, 0, 0.4);',
+    '  background: rgba(0, 0, 0, 0.5);',
     '  opacity: 0;',
     '  transition: opacity 0.3s ease;',
     '  pointer-events: none;',
@@ -32,44 +32,44 @@
     '  pointer-events: auto;',
     '}',
 
-    /* iframe 컨테이너 */
+    /* iframe — 데스크탑: 화면 중앙 큰 사이즈 */
     '#oncare-embed-frame {',
     '  position: fixed;',
-    '  bottom: 32px;',
-    '  right: 32px;',
+    '  top: 50%;',
+    '  left: 50%;',
+    '  transform: translate(-50%, -50%) scale(0.95);',
     '  z-index: ' + Z_INDEX + ';',
-    '  width: 440px;',
-    '  height: 680px;',
-    '  max-height: calc(100vh - 80px);',
+    '  width: 90vw;',
+    '  max-width: 1100px;',
+    '  height: 85vh;',
     '  border: none;',
     '  border-radius: 20px;',
     '  overflow: hidden;',
-    '  box-shadow: 0 12px 48px rgba(0,0,0,0.25), 0 4px 16px rgba(0,0,0,0.1);',
+    '  box-shadow: 0 20px 60px rgba(0,0,0,0.3);',
     '  opacity: 0;',
-    '  transform: translateY(20px) scale(0.95);',
     '  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);',
     '  pointer-events: none;',
     '  background: #fff;',
     '}',
     '#oncare-embed-frame.oncare-visible {',
     '  opacity: 1;',
-    '  transform: translateY(0) scale(1);',
+    '  transform: translate(-50%, -50%) scale(1);',
     '  pointer-events: auto;',
     '}',
 
     /* 닫기 버튼 */
     '#oncare-embed-close {',
     '  position: fixed;',
-    '  bottom: 700px;',
-    '  right: 36px;',
+    '  top: calc(50% - 42.5vh - 20px);',
+    '  right: calc(50% - 45vw);',
     '  z-index: ' + Z_INDEX + ';',
-    '  width: 36px;',
-    '  height: 36px;',
+    '  width: 40px;',
+    '  height: 40px;',
     '  border-radius: 50%;',
     '  border: none;',
     '  background: rgba(0,0,0,0.6);',
     '  color: #fff;',
-    '  font-size: 20px;',
+    '  font-size: 22px;',
     '  cursor: pointer;',
     '  display: none;',
     '  align-items: center;',
@@ -79,16 +79,23 @@
     '#oncare-embed-close:hover { background: rgba(0,0,0,0.8); }',
     '#oncare-embed-close.oncare-visible { display: flex; }',
 
-    /* 모바일 반응형 */
+    /* 모바일: 전체 화면 */
     '@media (max-width: 768px) {',
     '  #oncare-embed-frame {',
     '    top: 0; left: 0; right: 0; bottom: 0;',
     '    width: 100%; height: 100%;',
-    '    max-height: 100%;',
+    '    max-width: 100%;',
+    '    transform: none;',
     '    border-radius: 0;',
+    '    opacity: 0;',
+    '    transition: opacity 0.3s ease;',
+    '  }',
+    '  #oncare-embed-frame.oncare-visible {',
+    '    opacity: 1;',
+    '    transform: none;',
     '  }',
     '  #oncare-embed-close {',
-    '    top: 12px; right: 12px; bottom: auto;',
+    '    top: 12px; right: 12px;',
     '  }',
     '}',
   ].join('\n');
@@ -105,7 +112,7 @@
     frame.id = 'oncare-embed-frame';
     frame.src = CHATBOT_URL;
     frame.allow = 'microphone';
-    frame.setAttribute('aria-label', '서울온케어 AI 상담');
+    frame.setAttribute('aria-label', '서울온케어 24시상담');
     document.body.appendChild(frame);
 
     var closeBtn = document.createElement('button');
