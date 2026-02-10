@@ -526,6 +526,7 @@ router.get(
     const analyses = await prisma.labAnalysis.findMany({
       where: { id: { in: approval.analysisIds }, deletedAt: null },
       include: {
+        patient: { select: { id: true, name: true, emrPatientId: true, dob: true, sex: true } },
         labResults: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } },
       },
     });
@@ -564,7 +565,16 @@ router.get(
     // 환자별로 각각 새 페이지에 EONE 스타일 PDF 생성
     for (let ai = 0; ai < analyses.length; ai++) {
       const analysis = analyses[ai];
-      const patientName = (analysis.patientName || '').replace(/[\u{1F300}-\u{1FFFF}]/gu, '').trim();
+      const patientName = (analysis.patientName || analysis.patient?.name || '').replace(/[\u{1F300}-\u{1FFFF}]/gu, '').trim();
+      const chartNo = ((analysis.emrPatientId || analysis.patient?.emrPatientId || '') as string).replace(/[\u{1F300}-\u{1FFFF}]/gu, '').trim();
+      // 생년월일 마스킹: YYMM까지 표시, 나머지 xx 처리
+      let maskedDob = '';
+      if (analysis.patient?.dob) {
+        const d = new Date(analysis.patient.dob);
+        const yy = String(d.getFullYear() % 100).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        maskedDob = `${yy}${mm}xx-xxxxxxx`;
+      }
 
       // 페이지 수 계산
       const resultsPerFirst = 28;
@@ -609,8 +619,8 @@ router.get(
 
       drawCell(0, 0, '병(의)원명', '서울온케어의원');
       drawCell(0, 1, '수진자명', patientName);
-      drawCell(0, 2, '생년월일', '');
-      drawCell(0, 3, '차트번호', '');
+      drawCell(0, 2, '생년월일', maskedDob);
+      drawCell(0, 3, '차트번호', chartNo);
       drawCell(0, 4, '검체종류', 'S:Serum');
       drawCell(1, 0, '기관기호', '');
       drawCell(1, 1, '진료과/병동', '');

@@ -718,7 +718,7 @@ router.get(
     const analysis = await prisma.labAnalysis.findFirst({
       where: { id, deletedAt: null },
       include: {
-        patient: { select: { id: true, name: true, emrPatientId: true } },
+        patient: { select: { id: true, name: true, emrPatientId: true, dob: true, sex: true } },
         approvedBy: { select: { id: true, name: true } },
         labResults: {
           where: { deletedAt: null },
@@ -772,6 +772,15 @@ router.get(
     const blue = rgb(0, 0.3, 0.7);
 
     const patientName = sanitizeForPdf(analysis.patientName || analysis.patient?.name) || '';
+    const chartNo = sanitizeForPdf(analysis.emrPatientId || analysis.patient?.emrPatientId) || '';
+    // 생년월일 마스킹: YYMM까지 표시, 나머지 xx 처리 (주민번호 형식)
+    let maskedDob = '';
+    if (analysis.patient?.dob) {
+      const d = new Date(analysis.patient.dob);
+      const yy = String(d.getFullYear() % 100).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      maskedDob = `${yy}${mm}xx-xxxxxxx`;
+    }
     const testDate = analysis.upload?.uploadedDate
       ? formatShortDate(analysis.upload.uploadedDate)
       : '';
@@ -856,8 +865,8 @@ router.get(
       // 1열 (좌)
       drawInfoCell(0, 0, '병(의)원명', '서울온케어의원');
       drawInfoCell(0, 1, '수진자명', patientName);
-      drawInfoCell(0, 2, '생년월일', '');
-      drawInfoCell(0, 3, '차트번호', '');
+      drawInfoCell(0, 2, '생년월일', maskedDob);
+      drawInfoCell(0, 3, '차트번호', chartNo);
       drawInfoCell(0, 4, '검체종류', 'S:Serum');
 
       // 2열 (중)
