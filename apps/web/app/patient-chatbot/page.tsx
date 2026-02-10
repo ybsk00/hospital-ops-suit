@@ -85,7 +85,18 @@ export default function PatientChatbotPage() {
       timestamp: new Date(),
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    // assistant 플레이스홀더를 즉시 생성하여 인라인 타이핑 인디케이터 표시
+    const assistantId = (Date.now() + 1).toString();
+    setMessages((prev) => [
+      ...prev,
+      userMessage,
+      {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        timestamp: new Date(),
+      },
+    ]);
     setInput('');
     setLoading(true);
 
@@ -118,17 +129,6 @@ export default function PatientChatbotPage() {
 
       const decoder = new TextDecoder();
       let fullText = '';
-
-      const assistantId = (Date.now() + 1).toString();
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: assistantId,
-          role: 'assistant',
-          content: '',
-          timestamp: new Date(),
-        },
-      ]);
 
       while (true) {
         const { done, value } = await reader.read();
@@ -174,15 +174,14 @@ export default function PatientChatbotPage() {
       }
     } catch (err) {
       console.error('Chat error:', err);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: '죄송합니다. 오류가 발생했습니다. 잠시 후 다시 시도해주세요.',
-          timestamp: new Date(),
-        },
-      ]);
+      // 이미 존재하는 플레이스홀더를 에러 메시지로 교체
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId
+            ? { ...m, content: '죄송합니다. 오류가 발생했습니다. 잠시 후 다시 시도해주세요.' }
+            : m
+        )
+      );
     } finally {
       setLoading(false);
       inputRef.current?.focus();
@@ -338,24 +337,6 @@ export default function PatientChatbotPage() {
                   )}
                 </div>
               ))}
-
-              {loading && !messages.some((m) => m.role === 'assistant' && !m.content) && (
-                <div className="flex gap-4 max-w-[85%]">
-                  <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#E0F2F1] to-[#B2DFDB] flex-shrink-0 flex items-center justify-center shadow-lg mt-1 ring-2 ring-white/40 overflow-hidden border border-white/50">
-                    <img alt="Oncare Bot" className="w-full h-full object-cover scale-110 translate-y-1" src={BOT_AVATAR} />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs text-[#2A9D8F] font-bold ml-1 drop-shadow-sm">온케어봇</span>
-                    <div className="chat-bubble-glass p-4 rounded-2xl rounded-tl-none shadow-lg">
-                      <div className="typing-indicator">
-                        <span></span>
-                        <span></span>
-                        <span></span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
 
               <div ref={messagesEndRef} />
             </div>
