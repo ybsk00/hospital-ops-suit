@@ -757,356 +757,328 @@ router.get(
       console.warn('Korean font not found, using Helvetica (Korean text will not display)');
     }
 
-    const page = pdfDoc.addPage([595, 842]); // A4
-    const { width, height } = page.getSize();
-    const margin = 50;
-    let y = height - margin;
+    // ============================================================
+    // EONE 스타일 검사결과 보고서 PDF 생성
+    // ============================================================
+    const pageW = 595;
+    const pageH = 842;
+    const margin = 40;
+    const contentW = pageW - margin * 2;
+    const black = rgb(0, 0, 0);
+    const gray = rgb(0.4, 0.4, 0.4);
+    const lightGray = rgb(0.85, 0.85, 0.85);
+    const headerBg = rgb(0.93, 0.93, 0.93);
+    const red = rgb(0.8, 0, 0);
+    const blue = rgb(0, 0.3, 0.7);
 
-    // 스탬프 (우선순위) - 최상단 가운데 배치
+    const patientName = sanitizeForPdf(analysis.patientName || analysis.patient?.name) || '';
+    const testDate = analysis.upload?.uploadedDate
+      ? formatShortDate(analysis.upload.uploadedDate)
+      : '';
+    const approvalDate = analysis.approvedAt ? formatShortDateTime(analysis.approvedAt) : '';
+    const approverName = sanitizeForPdf(analysis.approvedBy?.name) || '';
+
+    // 총 페이지 수 사전 계산
+    const resultsPerFirstPage = 28;
+    const resultsPerNextPage = 38;
+    const totalResults = analysis.labResults.length;
+    let totalPages = 1;
+    if (totalResults > resultsPerFirstPage) {
+      totalPages += Math.ceil((totalResults - resultsPerFirstPage) / resultsPerNextPage);
+    }
+
+    let currentPage = pdfDoc.addPage([pageW, pageH]);
+    let pageCount = 1;
+    let y = pageH - margin;
+
+    // ── 우선순위 스탬프 (최상단) ──
     if (analysis.stamp || analysis.priority !== 'NORMAL') {
       const stampText = sanitizeForPdf(analysis.stamp) || getPriorityStampText(analysis.priority);
       const stampColor = getPriorityColor(analysis.priority);
+      const sFontSize = 14;
+      const sTextW = font.widthOfTextAtSize(stampText, sFontSize);
+      const sPad = 16;
+      const sW = sTextW + sPad * 2;
+      const sH = 30;
+      const sX = (pageW - sW) / 2;
 
-      // 스탬프 텍스트 너비 계산하여 가운데 정렬
-      const stampFontSize = 16;
-      const stampTextWidth = font.widthOfTextAtSize(stampText, stampFontSize);
-      const stampPadding = 20;
-      const stampWidth = stampTextWidth + stampPadding * 2;
-      const stampHeight = 36;
-      const stampX = (width - stampWidth) / 2;
-      const stampY = y - stampHeight;
-
-      // 스탬프 배경
-      page.drawRectangle({
-        x: stampX,
-        y: stampY,
-        width: stampWidth,
-        height: stampHeight,
-        borderColor: stampColor,
-        borderWidth: 2,
-        color: rgb(1, 1, 1),
-      });
-
-      // 스탬프 텍스트 (가운데 정렬)
-      page.drawText(stampText, {
-        x: stampX + stampPadding,
-        y: stampY + 10,
-        size: stampFontSize,
-        font: boldFont,
-        color: stampColor,
-      });
-
-      y -= stampHeight + 25;
+      currentPage.drawRectangle({ x: sX, y: y - sH, width: sW, height: sH, borderColor: stampColor, borderWidth: 2, color: rgb(1, 1, 1) });
+      currentPage.drawText(stampText, { x: sX + sPad, y: y - sH + 9, size: sFontSize, font: boldFont, color: stampColor });
+      y -= sH + 15;
     }
 
-    // 헤더: 서울온케어의원 (가운데 정렬)
-    const headerTitle = '서울온케어의원';
-    const headerTitleWidth = font.widthOfTextAtSize(headerTitle, 22);
-    page.drawText(headerTitle, {
-      x: (width - headerTitleWidth) / 2,
-      y,
-      size: 22,
-      font: boldFont,
-      color: rgb(0.2, 0.4, 0.6),
-    });
-    y -= 30;
+    // ── 헬퍼: 헤더 + 환자정보 테이블 그리기 ──
+    const drawPageHeader = (pg: typeof currentPage, startY: number, pgNum: number) => {
+      let cy = startY;
 
-    // 혈액검사결과지 (가운데 정렬)
-    const subTitle = '혈액검사결과지';
-    const subTitleWidth = font.widthOfTextAtSize(subTitle, 14);
-    page.drawText(subTitle, {
-      x: (width - subTitleWidth) / 2,
-      y,
-      size: 14,
-      font,
-      color: rgb(0.4, 0.4, 0.4),
-    });
-    y -= 35;
+      // 타이틀 "검사결과 보고서"
+      pg.drawText('검사결과 보고서', { x: margin, y: cy, size: 16, font: boldFont, color: black });
+      // 페이지 번호
+      const pgText = `${pgNum} of ${totalPages}`;
+      const pgTextW = font.widthOfTextAtSize(pgText, 9);
+      pg.drawText(pgText, { x: pageW - margin - pgTextW, y: cy + 2, size: 9, font, color: gray });
+      cy -= 28;
 
-    // 구분선
-    page.drawLine({
-      start: { x: margin, y },
-      end: { x: width - margin, y },
-      thickness: 1,
-      color: rgb(0.7, 0.7, 0.7),
-    });
-    y -= 25;
+      // ── 환자정보 테이블 (3열 5행) ──
+      const infoH = 14;
+      const infoRows = 5;
+      const tableH = infoRows * infoH;
+      const col1W = contentW * 0.36;
+      const col2W = contentW * 0.30;
+      const col3W = contentW * 0.34;
+      const tX = margin;
+      const tY = cy;
 
-    // 환자 정보
-    const patientName = sanitizeForPdf(analysis.patientName || analysis.patient?.name) || 'Unknown';
-    const emrId = sanitizeForPdf(analysis.emrPatientId || analysis.patient?.emrPatientId) || '-';
-    const testDate = formatDateForPdf(analysis.upload?.uploadedDate);
-
-    page.drawText(`환자명: ${patientName}`, { x: margin, y, size: 11, font: boldFont });
-    page.drawText(`차트번호: ${emrId}`, { x: width - margin - 150, y, size: 11, font });
-    y -= 18;
-    page.drawText(`검사일: ${testDate}`, { x: margin, y, size: 11, font });
-    y -= 30;
-
-    // 검사 결과 테이블 (가운데 정렬) - 여러 페이지 지원
-    const colWidths = [130, 70, 50, 90, 60];
-    const tableWidth = colWidths.reduce((a, b) => a + b, 0);
-    const headers = ['검사항목', '결과', '단위', '참고범위', '판정'];
-    const tableX = (width - tableWidth) / 2;
-    const rowHeight = 18;
-    const headerHeight = 22;
-    const minYForTable = 180; // 페이지 하단 여백
-
-    let currentPage = page;
-    let tableY = y;
-    let pageCount = 1;
-
-    // 헬퍼: 테이블 헤더 그리기
-    const drawTableHeader = (pg: typeof page, startY: number) => {
-      pg.drawRectangle({
-        x: tableX,
-        y: startY - 20,
-        width: tableWidth,
-        height: 20,
-        color: rgb(0.9, 0.9, 0.9),
-      });
-
-      let colX = tableX;
-      for (let i = 0; i < headers.length; i++) {
-        pg.drawText(headers[i], {
-          x: colX + 5,
-          y: startY - 15,
-          size: 9,
-          font: boldFont,
-        });
-        colX += colWidths[i];
+      // 외곽 테두리
+      pg.drawRectangle({ x: tX, y: tY - tableH, width: contentW, height: tableH, borderColor: black, borderWidth: 0.5 });
+      // 세로선
+      pg.drawLine({ start: { x: tX + col1W, y: tY }, end: { x: tX + col1W, y: tY - tableH }, thickness: 0.5, color: black });
+      pg.drawLine({ start: { x: tX + col1W + col2W, y: tY }, end: { x: tX + col1W + col2W, y: tY - tableH }, thickness: 0.5, color: black });
+      // 가로선
+      for (let r = 1; r < infoRows; r++) {
+        pg.drawLine({ start: { x: tX, y: tY - r * infoH }, end: { x: tX + contentW, y: tY - r * infoH }, thickness: 0.3, color: lightGray });
       }
-      return startY - headerHeight;
+
+      const fs = 8;
+      const labelC = rgb(0.3, 0.3, 0.3);
+      const valC = black;
+      const lPad = 4;
+
+      // 좌측 열
+      const drawInfoCell = (col: number, row: number, label: string, value: string) => {
+        const cx = tX + (col === 0 ? 0 : col === 1 ? col1W : col1W + col2W) + lPad;
+        const ry = tY - row * infoH - 10;
+        pg.drawText(label, { x: cx, y: ry, size: fs, font, color: labelC });
+        const labelW = font.widthOfTextAtSize(label + ' ', fs);
+        pg.drawText(value, { x: cx + labelW, y: ry, size: fs, font: boldFont, color: valC });
+      };
+
+      // 1열 (좌)
+      drawInfoCell(0, 0, '병(의)원명', '서울온케어의원');
+      drawInfoCell(0, 1, '수진자명', patientName);
+      drawInfoCell(0, 2, '생년월일', '');
+      drawInfoCell(0, 3, '차트번호', '');
+      drawInfoCell(0, 4, '검체종류', 'S:Serum');
+
+      // 2열 (중)
+      drawInfoCell(1, 0, '기관기호', '');
+      drawInfoCell(1, 1, '진료과/병동', '');
+      drawInfoCell(1, 2, '의 사 명', approverName);
+      drawInfoCell(1, 3, '접수번호', '');
+
+      // 3열 (우)
+      drawInfoCell(2, 0, '검체채취일', '');
+      drawInfoCell(2, 1, '접수일시', '');
+      drawInfoCell(2, 2, '검사일시', testDate);
+      drawInfoCell(2, 3, '보고일시', approvalDate);
+      drawInfoCell(2, 4, '기    타', '');
+
+      cy -= tableH + 12;
+      return cy;
     };
 
-    // 첫 페이지 테이블 헤더
-    tableY = drawTableHeader(currentPage, tableY);
+    y = drawPageHeader(currentPage, y, pageCount);
 
-    // 테이블 데이터 - 모든 결과 출력
+    // ── 결과 테이블 ──
+    const rColWidths = [70, 150, 60, 40, 140, 35]; // 보험코드, 검사명, 결과, 판정, 참고치, 검체
+    const rTableW = rColWidths.reduce((a, b) => a + b, 0);
+    const rTableX = margin;
+    const rHeaders = ['보험코드', '검사명', '결과', '판정', '참고치', '검체'];
+    const rRowH = 15;
+    const rHeaderH = 18;
+    const minYForTable = 90;
+
+    // 헬퍼: 결과 테이블 헤더
+    const drawResultHeader = (pg: typeof currentPage, startY: number) => {
+      // 헤더 배경
+      pg.drawRectangle({ x: rTableX, y: startY - rHeaderH, width: rTableW, height: rHeaderH, color: headerBg });
+      // 헤더 외곽
+      pg.drawRectangle({ x: rTableX, y: startY - rHeaderH, width: rTableW, height: rHeaderH, borderColor: black, borderWidth: 0.5 });
+      // 세로선 + 텍스트
+      let cx = rTableX;
+      for (let i = 0; i < rHeaders.length; i++) {
+        if (i > 0) {
+          pg.drawLine({ start: { x: cx, y: startY }, end: { x: cx, y: startY - rHeaderH }, thickness: 0.3, color: black });
+        }
+        pg.drawText(rHeaders[i], { x: cx + 4, y: startY - rHeaderH + 5, size: 8, font: boldFont, color: black });
+        cx += rColWidths[i];
+      }
+      return startY - rHeaderH;
+    };
+
+    let tableY = drawResultHeader(currentPage, y);
+
+    // 테이블 데이터
     for (let idx = 0; idx < analysis.labResults.length; idx++) {
       const result = analysis.labResults[idx];
 
-      // 페이지 넘김 체크
-      if (tableY < minYForTable) {
-        // 새 페이지 추가
-        currentPage = pdfDoc.addPage([595, 842]);
+      // 페이지 넘김
+      if (tableY - rRowH < minYForTable) {
+        // 현재 페이지 테이블 하단 닫기선
+        currentPage.drawLine({ start: { x: rTableX, y: tableY }, end: { x: rTableX + rTableW, y: tableY }, thickness: 0.5, color: black });
+
+        currentPage = pdfDoc.addPage([pageW, pageH]);
         pageCount++;
-        tableY = height - margin;
+        let ny = pageH - margin;
 
         // 새 페이지 헤더
-        currentPage.drawText(`${headerTitle} - ${subTitle} (${pageCount}페이지)`, {
-          x: margin,
-          y: tableY,
-          size: 12,
-          font: boldFont,
-          color: rgb(0.4, 0.4, 0.4),
-        });
-        tableY -= 30;
+        currentPage.drawText('검사결과 보고서 (계속)', { x: margin, y: ny, size: 12, font: boldFont, color: gray });
+        const pgText = `${pageCount} of ${totalPages}`;
+        const pgTextW = font.widthOfTextAtSize(pgText, 9);
+        currentPage.drawText(pgText, { x: pageW - margin - pgTextW, y: ny + 2, size: 9, font, color: gray });
+        ny -= 25;
 
-        // 테이블 헤더 다시 그리기
-        tableY = drawTableHeader(currentPage, tableY);
+        tableY = drawResultHeader(currentPage, ny);
       }
 
-      let colX = tableX;
+      // 행 그리기
+      const rowY = tableY - rRowH;
+      let cx = rTableX;
       const flagColor = getFlagColor(result.flag);
 
-      // 행 배경 (이상수치인 경우)
+      // 행 배경 (이상수치)
       if (result.flag !== 'NORMAL') {
-        currentPage.drawRectangle({
-          x: tableX,
-          y: tableY - 15,
-          width: tableWidth,
-          height: 16,
-          color: rgb(1, 0.95, 0.9),
-        });
+        currentPage.drawRectangle({ x: rTableX + 0.5, y: rowY, width: rTableW - 1, height: rRowH, color: rgb(1, 0.96, 0.93) });
       }
 
-      // 항목명 (null 안전 처리 + PDF 정제)
-      const testItemName = sanitizeForPdf(result.analyte || result.testName) || 'Unknown';
-      currentPage.drawText(truncateText(testItemName, 18), {
-        x: colX + 5,
-        y: tableY - 12,
-        size: 9,
-        font,
-      });
-      colX += colWidths[0];
+      // 행 하단선
+      currentPage.drawLine({ start: { x: rTableX, y: rowY }, end: { x: rTableX + rTableW, y: rowY }, thickness: 0.2, color: lightGray });
 
-      // 결과 (Decimal to String 안전 변환)
+      const rFs = 8;
+      const textY = rowY + 4;
+
+      // 보험코드 (빈칸)
+      cx += rColWidths[0];
+
+      // 검사명
+      const testItemName = sanitizeForPdf(result.analyte || result.testName) || '';
+      currentPage.drawText(truncateText(testItemName, 22), { x: cx + 4, y: textY, size: rFs, font, color: black });
+      cx += rColWidths[1];
+
+      // 결과
       const valueStr = result.value != null ? String(result.value) : '-';
-      currentPage.drawText(valueStr, {
-        x: colX + 5,
-        y: tableY - 12,
-        size: 9,
-        font: boldFont,
-        color: flagColor,
-      });
-      colX += colWidths[1];
+      currentPage.drawText(valueStr, { x: cx + 4, y: textY, size: rFs, font: boldFont, color: flagColor });
+      cx += rColWidths[2];
 
-      // 단위
-      currentPage.drawText(sanitizeForPdf(result.unit) || '', {
-        x: colX + 5,
-        y: tableY - 12,
-        size: 9,
-        font,
-      });
-      colX += colWidths[2];
+      // 판정 (▲H / ▼L 형식)
+      let flagText = '';
+      if (result.flag === 'HIGH' || result.flag === 'CRITICAL') {
+        flagText = '\u25B2H'; // ▲H
+      } else if (result.flag === 'LOW') {
+        flagText = '\u25BCL'; // ▼L
+      }
+      if (flagText) {
+        currentPage.drawText(flagText, { x: cx + 4, y: textY, size: rFs, font: boldFont, color: flagColor });
+      }
+      cx += rColWidths[3];
 
-      // 참고범위 (Decimal to String 안전 변환)
-      const refRange = result.refLow != null && result.refHigh != null
-        ? `${String(result.refLow)} - ${String(result.refHigh)}`
-        : '-';
-      currentPage.drawText(refRange, {
-        x: colX + 5,
-        y: tableY - 12,
-        size: 9,
-        font,
-      });
-      colX += colWidths[3];
+      // 참고치 (범위 + 단위)
+      const unitStr = sanitizeForPdf(result.unit) || '';
+      let refText = '';
+      if (result.refLow != null && result.refHigh != null) {
+        refText = `${String(result.refLow)} ~ ${String(result.refHigh)}`;
+        if (unitStr) refText += ` ${unitStr}`;
+      } else if (unitStr) {
+        refText = unitStr;
+      }
+      currentPage.drawText(truncateText(refText, 22), { x: cx + 4, y: textY, size: rFs, font, color: black });
+      cx += rColWidths[4];
 
-      // 판정
-      currentPage.drawText(result.flag, {
-        x: colX + 5,
-        y: tableY - 12,
-        size: 9,
-        font: boldFont,
-        color: flagColor,
-      });
+      // 검체
+      currentPage.drawText('S', { x: cx + 8, y: textY, size: rFs, font, color: black });
 
-      tableY -= rowHeight;
+      tableY = rowY;
     }
 
-    y = tableY - 20;
+    // 테이블 하단 닫기선
+    currentPage.drawLine({ start: { x: rTableX, y: tableY }, end: { x: rTableX + rTableW, y: tableY }, thickness: 0.5, color: black });
+    // 좌우 세로선 전체
+    currentPage.drawLine({ start: { x: rTableX, y: y }, end: { x: rTableX, y: tableY }, thickness: 0.5, color: black });
+    currentPage.drawLine({ start: { x: rTableX + rTableW, y: y }, end: { x: rTableX + rTableW, y: tableY }, thickness: 0.5, color: black });
 
-    // AI 소견 - 반드시 출력 (공간 부족 시 새 페이지)
+    y = tableY - 15;
+
+    // ── 분석 소견 ──
     const rawComment = analysis.doctorComment || analysis.aiComment;
     const comment = sanitizeForPdf(rawComment);
 
     if (comment) {
-      const commentLines = wrapText(comment, 80);
-      const commentHeight = commentLines.length * 14 + 40; // 제목 + 여백 포함
+      const commentLines = wrapText(comment, 75);
+      const commentHeight = commentLines.length * 13 + 35;
 
-      // 공간 부족 시 새 페이지
       if (y < commentHeight + 100) {
-        currentPage = pdfDoc.addPage([595, 842]);
+        currentPage = pdfDoc.addPage([pageW, pageH]);
         pageCount++;
-        y = height - margin;
-
-        currentPage.drawText(`${headerTitle} - 분석 소견`, {
-          x: margin,
-          y,
-          size: 12,
-          font: boldFont,
-          color: rgb(0.4, 0.4, 0.4),
-        });
-        y -= 30;
+        y = pageH - margin;
+        currentPage.drawText('검사결과 보고서 - 분석 소견', { x: margin, y, size: 12, font: boldFont, color: gray });
+        y -= 25;
       }
 
-      currentPage.drawLine({
-        start: { x: margin, y },
-        end: { x: width - margin, y },
-        thickness: 0.5,
-        color: rgb(0.8, 0.8, 0.8),
-      });
-      y -= 20;
+      currentPage.drawLine({ start: { x: margin, y }, end: { x: margin + contentW, y }, thickness: 0.5, color: lightGray });
+      y -= 16;
+      currentPage.drawText('분석 소견:', { x: margin, y, size: 10, font: boldFont, color: rgb(0.2, 0.4, 0.6) });
+      y -= 15;
 
-      currentPage.drawText('분석 소견:', {
-        x: margin,
-        y,
-        size: 11,
-        font: boldFont,
-        color: rgb(0.2, 0.4, 0.6),
-      });
-      y -= 18;
-
-      // 코멘트 줄바꿈 처리 - 전체 출력
       for (const line of commentLines) {
-        if (y < 100) {
-          // 새 페이지 추가
-          currentPage = pdfDoc.addPage([595, 842]);
+        if (y < 90) {
+          currentPage = pdfDoc.addPage([pageW, pageH]);
           pageCount++;
-          y = height - margin;
+          y = pageH - margin;
         }
-        currentPage.drawText(line, {
-          x: margin,
-          y,
-          size: 10,
-          font,
-          color: rgb(0.3, 0.3, 0.3),
-        });
-        y -= 14;
+        currentPage.drawText(line, { x: margin, y, size: 9, font, color: rgb(0.25, 0.25, 0.25) });
+        y -= 13;
       }
     }
 
-    // 승인 정보 (마지막 페이지 하단)
-    // 공간이 부족하면 새 페이지 추가
-    if (y < 120) {
-      currentPage = pdfDoc.addPage([595, 842]);
-      y = height - margin;
+    // ── 푸터 (검사자 / 보고자 + 기관 정보) ──
+    if (y < 100) {
+      currentPage = pdfDoc.addPage([pageW, pageH]);
+      y = pageH - margin;
     }
 
-    y = Math.min(y, 100);
-    currentPage.drawLine({
-      start: { x: margin, y: y + 10 },
-      end: { x: width - margin, y: y + 10 },
-      thickness: 0.5,
-      color: rgb(0.8, 0.8, 0.8),
+    const footerY = Math.min(y - 10, 75);
+    // 검사자 / 보고자 행
+    currentPage.drawLine({ start: { x: margin, y: footerY + 16 }, end: { x: margin + contentW, y: footerY + 16 }, thickness: 0.5, color: black });
+    currentPage.drawText('검사자', { x: margin + 4, y: footerY + 3, size: 8, font: boldFont, color: black });
+    currentPage.drawText('보고자', { x: margin + contentW / 2, y: footerY + 3, size: 8, font: boldFont, color: black });
+    if (approverName) {
+      const repLabel = approverName;
+      const repW = font.widthOfTextAtSize(repLabel, 8);
+      currentPage.drawText(repLabel, { x: margin + contentW / 2 + 40, y: footerY + 3, size: 8, font, color: black });
+    }
+    currentPage.drawLine({ start: { x: margin, y: footerY - 2 }, end: { x: margin + contentW, y: footerY - 2 }, thickness: 0.5, color: black });
+
+    // 기관 바
+    const barY = footerY - 16;
+    currentPage.drawRectangle({ x: margin, y: barY - 2, width: contentW, height: 14, color: rgb(0.95, 0.95, 0.95) });
+    currentPage.drawText('서울온케어의원', { x: margin + 4, y: barY + 1, size: 7, font: boldFont, color: black });
+    currentPage.drawText('TEL 031-000-0000  |  www.seouloncare.com', {
+      x: margin + contentW - 200, y: barY + 1, size: 7, font, color: gray,
     });
 
+    // ── 승인 스탬프 (우측 하단) ──
     if (analysis.approvedAt && analysis.approvedBy) {
-      const approvalDate = formatDateTimeForPdf(analysis.approvedAt);
-      const approverName = sanitizeForPdf(analysis.approvedBy.name) || 'Doctor';
-
-      currentPage.drawText(`승인일시: ${approvalDate}`, {
-        x: margin,
-        y,
-        size: 9,
-        font,
-        color: rgb(0.5, 0.5, 0.5),
-      });
-      currentPage.drawText(`승인의사: ${approverName}`, {
-        x: margin,
-        y: y - 14,
-        size: 9,
-        font,
-        color: rgb(0.5, 0.5, 0.5),
-      });
-
-      // 승인 스탬프 (우측 하단)
-      const stampSize = 60;
-      const stampX = width - margin - stampSize;
-      const stampY = y - 20;
+      const stampSize = 55;
+      const stampX = pageW - margin - stampSize - 5;
+      const stampCY = footerY + 50;
 
       currentPage.drawCircle({
         x: stampX + stampSize / 2,
-        y: stampY + stampSize / 2,
+        y: stampCY,
         size: stampSize / 2,
         borderColor: rgb(0.8, 0.1, 0.1),
         borderWidth: 2,
+        opacity: 0.7,
       });
 
       currentPage.drawText('승인', {
-        x: stampX + 18,
-        y: stampY + stampSize / 2 + 5,
-        size: 10,
-        font: boldFont,
-        color: rgb(0.8, 0.1, 0.1),
+        x: stampX + 16, y: stampCY + 8, size: 11, font: boldFont, color: rgb(0.8, 0.1, 0.1),
       });
-
-      const stampDate = formatDateForPdf(analysis.approvedAt);
-      currentPage.drawText(stampDate, {
-        x: stampX + 10,
-        y: stampY + stampSize / 2 - 8,
-        size: 7,
-        font,
-        color: rgb(0.8, 0.1, 0.1),
+      currentPage.drawText(formatShortDate(analysis.approvedAt), {
+        x: stampX + 8, y: stampCY - 5, size: 7, font, color: rgb(0.8, 0.1, 0.1),
       });
-
       currentPage.drawText(approverName, {
-        x: stampX + 15,
-        y: stampY + stampSize / 2 - 20,
-        size: 8,
-        font: boldFont,
-        color: rgb(0.8, 0.1, 0.1),
+        x: stampX + 12, y: stampCY - 16, size: 8, font: boldFont, color: rgb(0.8, 0.1, 0.1),
       });
     }
 
@@ -1203,6 +1175,28 @@ function wrapText(text: string, maxChars: number): string[] {
   }
 
   return lines;
+}
+
+// YYYY-MM-DD HH:MM 형식
+function formatShortDateTime(date: Date | string | null): string {
+  if (!date) return '';
+  const d = typeof date === 'string' ? new Date(date) : date;
+  const yy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}  ${hh}:${mi}`;
+}
+
+// YYYY-MM-DD 형식
+function formatShortDate(date: Date | string | null): string {
+  if (!date) return '';
+  const d = typeof date === 'string' ? new Date(date) : date;
+  const yy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 }
 
 export default router;

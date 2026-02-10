@@ -7,6 +7,9 @@ import { auditLog } from '../middleware/audit';
 import { AppError, asyncHandler } from '../middleware/errorHandler';
 import { generateDateSummary } from '../services/labAnalysisService';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
+import path from 'path';
+import fs from 'fs';
 import ExcelJS from 'exceljs';
 
 const router = Router();
@@ -523,77 +526,203 @@ router.get(
     const analyses = await prisma.labAnalysis.findMany({
       where: { id: { in: approval.analysisIds }, deletedAt: null },
       include: {
-        labResults: { where: { deletedAt: null } },
+        labResults: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } },
       },
     });
 
-    // PDF 생성
+    // PDF 생성 - 한글 폰트 지원
     const pdfDoc = await PDFDocument.create();
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    pdfDoc.registerFontkit(fontkit);
 
-    let page = pdfDoc.addPage([595, 842]); // A4
-    let y = 800;
-    const lineHeight = 14;
-    const margin = 50;
-
-    // 제목
-    page.drawText('Lab Results Report', { x: margin, y, font: boldFont, size: 18 });
-    y -= 30;
-
-    // 날짜
-    const dateStr = new Date(approval.uploadDate).toLocaleDateString('ko-KR');
-    page.drawText(`Date: ${dateStr}`, { x: margin, y, font, size: 12 });
-    y -= 20;
-
-    // 요약
-    const summary = approval.patientSummary as any;
-    page.drawText(`Total Patients: ${summary?.totalPatients || 0} | Abnormal: ${summary?.abnormalPatients || 0}`, {
-      x: margin, y, font, size: 11,
-    });
-    y -= 30;
-
-    // 환자별 결과
-    for (const analysis of analyses) {
-      if (y < 100) {
-        page = pdfDoc.addPage([595, 842]);
-        y = 800;
-      }
-
-      page.drawText(`Patient: ${analysis.patientName || 'Unknown'} (${analysis.emrPatientId || '-'})`, {
-        x: margin, y, font: boldFont, size: 11,
-      });
-      y -= lineHeight;
-
-      for (const result of analysis.labResults) {
-        if (y < 50) {
-          page = pdfDoc.addPage([595, 842]);
-          y = 800;
-        }
-        const flag = result.flag !== 'NORMAL' ? ` [${result.flag}]` : '';
-        page.drawText(`  ${result.analyte}: ${result.value} ${result.unit || ''}${flag}`, {
-          x: margin + 10, y, font, size: 9,
-          color: result.flag === 'CRITICAL' ? rgb(1, 0, 0) : result.flag !== 'NORMAL' ? rgb(0.8, 0.4, 0) : rgb(0, 0, 0),
-        });
-        y -= lineHeight;
-      }
-      y -= 10;
+    const fontPath = path.join(__dirname, '../../fonts/NotoSansKR-Regular.ttf');
+    let font;
+    let boldFont;
+    if (fs.existsSync(fontPath)) {
+      const fontBytes = fs.readFileSync(fontPath);
+      font = await pdfDoc.embedFont(fontBytes);
+      boldFont = font;
+    } else {
+      font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
     }
 
-    // 스탬프
-    if (approval.stampedAt) {
-      const stampY = 100;
-      const stampX = 450;
+    const pageW = 595;
+    const pageH = 842;
+    const margin = 40;
+    const contentW = pageW - margin * 2;
+    const black = rgb(0, 0, 0);
+    const gray = rgb(0.4, 0.4, 0.4);
+    const lightGray = rgb(0.85, 0.85, 0.85);
+    const headerBg = rgb(0.93, 0.93, 0.93);
 
-      page.drawCircle({ x: stampX, y: stampY, size: 40, borderColor: rgb(1, 0, 0), borderWidth: 2 });
-      page.drawText('APPROVED', { x: stampX - 28, y: stampY + 8, font: boldFont, size: 10, color: rgb(1, 0, 0) });
-      page.drawText(new Date(approval.stampedAt).toLocaleDateString('ko-KR'), {
-        x: stampX - 22, y: stampY - 5, font, size: 8, color: rgb(1, 0, 0),
-      });
-      if (approval.approvedBy) {
-        page.drawText(approval.approvedBy.name, {
-          x: stampX - 15, y: stampY - 18, font, size: 8, color: rgb(1, 0, 0),
-        });
+    const dateStr = new Date(approval.uploadDate).toISOString().slice(0, 10);
+    const approverName = approval.approvedBy?.name || '';
+    const approvalDateStr = approval.approvedAt
+      ? `${approval.approvedAt.getFullYear()}-${String(approval.approvedAt.getMonth() + 1).padStart(2, '0')}-${String(approval.approvedAt.getDate()).padStart(2, '0')}  ${String(approval.approvedAt.getHours()).padStart(2, '0')}:${String(approval.approvedAt.getMinutes()).padStart(2, '0')}`
+      : '';
+
+    // 환자별로 각각 새 페이지에 EONE 스타일 PDF 생성
+    for (let ai = 0; ai < analyses.length; ai++) {
+      const analysis = analyses[ai];
+      const patientName = (analysis.patientName || '').replace(/[\u{1F300}-\u{1FFFF}]/gu, '').trim();
+
+      // 페이지 수 계산
+      const resultsPerFirst = 28;
+      const resultsPerNext = 38;
+      const totalR = analysis.labResults.length;
+      let totalPg = 1;
+      if (totalR > resultsPerFirst) totalPg += Math.ceil((totalR - resultsPerFirst) / resultsPerNext);
+
+      let page = pdfDoc.addPage([pageW, pageH]);
+      let pgNum = 1;
+      let y = pageH - margin;
+
+      // ── 타이틀 ──
+      page.drawText('검사결과 보고서', { x: margin, y, size: 16, font: boldFont, color: black });
+      const pgText = `${pgNum} of ${totalPg}`;
+      page.drawText(pgText, { x: pageW - margin - font.widthOfTextAtSize(pgText, 9), y: y + 2, size: 9, font, color: gray });
+      y -= 28;
+
+      // ── 환자정보 테이블 ──
+      const infoH = 14;
+      const infoRows = 5;
+      const tableH = infoRows * infoH;
+      const col1W = contentW * 0.36;
+      const col2W = contentW * 0.30;
+      const tX = margin;
+
+      page.drawRectangle({ x: tX, y: y - tableH, width: contentW, height: tableH, borderColor: black, borderWidth: 0.5 });
+      page.drawLine({ start: { x: tX + col1W, y }, end: { x: tX + col1W, y: y - tableH }, thickness: 0.5, color: black });
+      page.drawLine({ start: { x: tX + col1W + col2W, y }, end: { x: tX + col1W + col2W, y: y - tableH }, thickness: 0.5, color: black });
+      for (let r = 1; r < infoRows; r++) {
+        page.drawLine({ start: { x: tX, y: y - r * infoH }, end: { x: tX + contentW, y: y - r * infoH }, thickness: 0.3, color: lightGray });
+      }
+
+      const fs8 = 8;
+      const labelC = rgb(0.3, 0.3, 0.3);
+      const drawCell = (col: number, row: number, label: string, value: string) => {
+        const cx = tX + (col === 0 ? 0 : col === 1 ? col1W : col1W + col2W) + 4;
+        const ry = y - row * infoH - 10;
+        page.drawText(label, { x: cx, y: ry, size: fs8, font, color: labelC });
+        page.drawText(value, { x: cx + font.widthOfTextAtSize(label + ' ', fs8), y: ry, size: fs8, font: boldFont, color: black });
+      };
+
+      drawCell(0, 0, '병(의)원명', '서울온케어의원');
+      drawCell(0, 1, '수진자명', patientName);
+      drawCell(0, 2, '생년월일', '');
+      drawCell(0, 3, '차트번호', '');
+      drawCell(0, 4, '검체종류', 'S:Serum');
+      drawCell(1, 0, '기관기호', '');
+      drawCell(1, 1, '진료과/병동', '');
+      drawCell(1, 2, '의 사 명', approverName);
+      drawCell(1, 3, '접수번호', '');
+      drawCell(2, 0, '검체채취일', '');
+      drawCell(2, 1, '접수일시', '');
+      drawCell(2, 2, '검사일시', dateStr);
+      drawCell(2, 3, '보고일시', approvalDateStr);
+      drawCell(2, 4, '기    타', '');
+
+      y -= tableH + 12;
+
+      // ── 결과 테이블 ──
+      const rColW = [70, 150, 60, 40, 140, 35];
+      const rTW = rColW.reduce((a, b) => a + b, 0);
+      const rHeaders = ['보험코드', '검사명', '결과', '판정', '참고치', '검체'];
+      const rRowH = 15;
+      const rHH = 18;
+      const minY = 90;
+
+      const drawRH = (pg: typeof page, sy: number) => {
+        pg.drawRectangle({ x: margin, y: sy - rHH, width: rTW, height: rHH, color: headerBg });
+        pg.drawRectangle({ x: margin, y: sy - rHH, width: rTW, height: rHH, borderColor: black, borderWidth: 0.5 });
+        let cx = margin;
+        for (let i = 0; i < rHeaders.length; i++) {
+          if (i > 0) pg.drawLine({ start: { x: cx, y: sy }, end: { x: cx, y: sy - rHH }, thickness: 0.3, color: black });
+          pg.drawText(rHeaders[i], { x: cx + 4, y: sy - rHH + 5, size: 8, font: boldFont, color: black });
+          cx += rColW[i];
+        }
+        return sy - rHH;
+      };
+
+      let tY = drawRH(page, y);
+      let curPg = page;
+
+      for (const result of analysis.labResults) {
+        if (tY - rRowH < minY) {
+          curPg.drawLine({ start: { x: margin, y: tY }, end: { x: margin + rTW, y: tY }, thickness: 0.5, color: black });
+          curPg = pdfDoc.addPage([pageW, pageH]);
+          pgNum++;
+          let ny = pageH - margin;
+          curPg.drawText('검사결과 보고서 (계속)', { x: margin, y: ny, size: 12, font: boldFont, color: gray });
+          const pt = `${pgNum} of ${totalPg}`;
+          curPg.drawText(pt, { x: pageW - margin - font.widthOfTextAtSize(pt, 9), y: ny + 2, size: 9, font, color: gray });
+          ny -= 25;
+          tY = drawRH(curPg, ny);
+        }
+
+        const rowY = tY - rRowH;
+        const flagColor = result.flag === 'CRITICAL' ? rgb(0.8, 0, 0) : result.flag === 'HIGH' ? rgb(0.9, 0.4, 0) : result.flag === 'LOW' ? rgb(0, 0.4, 0.8) : black;
+
+        if (result.flag !== 'NORMAL') {
+          curPg.drawRectangle({ x: margin + 0.5, y: rowY, width: rTW - 1, height: rRowH, color: rgb(1, 0.96, 0.93) });
+        }
+        curPg.drawLine({ start: { x: margin, y: rowY }, end: { x: margin + rTW, y: rowY }, thickness: 0.2, color: lightGray });
+
+        let cx = margin;
+        const tYY = rowY + 4;
+        cx += rColW[0]; // 보험코드 빈칸
+        const itemName = (result.analyte || result.testName || '').replace(/[\u{1F300}-\u{1FFFF}]/gu, '').trim();
+        curPg.drawText(itemName.length > 22 ? itemName.substring(0, 20) + '..' : itemName, { x: cx + 4, y: tYY, size: 8, font, color: black });
+        cx += rColW[1];
+        curPg.drawText(result.value != null ? String(result.value) : '-', { x: cx + 4, y: tYY, size: 8, font: boldFont, color: flagColor });
+        cx += rColW[2];
+        let fText = '';
+        if (result.flag === 'HIGH' || result.flag === 'CRITICAL') fText = '\u25B2H';
+        else if (result.flag === 'LOW') fText = '\u25BCL';
+        if (fText) curPg.drawText(fText, { x: cx + 4, y: tYY, size: 8, font: boldFont, color: flagColor });
+        cx += rColW[3];
+        const unitS = (result.unit || '').replace(/[\u{1F300}-\u{1FFFF}]/gu, '').trim();
+        let refT = '';
+        if (result.refLow != null && result.refHigh != null) {
+          refT = `${String(result.refLow)} ~ ${String(result.refHigh)}`;
+          if (unitS) refT += ` ${unitS}`;
+        }
+        curPg.drawText(refT.length > 22 ? refT.substring(0, 20) + '..' : refT, { x: cx + 4, y: tYY, size: 8, font, color: black });
+        cx += rColW[4];
+        curPg.drawText('S', { x: cx + 8, y: tYY, size: 8, font, color: black });
+
+        tY = rowY;
+      }
+
+      // 테이블 닫기
+      curPg.drawLine({ start: { x: margin, y: tY }, end: { x: margin + rTW, y: tY }, thickness: 0.5, color: black });
+      curPg.drawLine({ start: { x: margin, y }, end: { x: margin, y: tY }, thickness: 0.5, color: black });
+      curPg.drawLine({ start: { x: margin + rTW, y }, end: { x: margin + rTW, y: tY }, thickness: 0.5, color: black });
+
+      // ── 푸터 ──
+      const fY = Math.min(tY - 25, 75);
+      curPg.drawLine({ start: { x: margin, y: fY + 16 }, end: { x: margin + contentW, y: fY + 16 }, thickness: 0.5, color: black });
+      curPg.drawText('검사자', { x: margin + 4, y: fY + 3, size: 8, font: boldFont, color: black });
+      curPg.drawText('보고자', { x: margin + contentW / 2, y: fY + 3, size: 8, font: boldFont, color: black });
+      if (approverName) curPg.drawText(approverName, { x: margin + contentW / 2 + 40, y: fY + 3, size: 8, font, color: black });
+      curPg.drawLine({ start: { x: margin, y: fY - 2 }, end: { x: margin + contentW, y: fY - 2 }, thickness: 0.5, color: black });
+
+      const barY = fY - 16;
+      curPg.drawRectangle({ x: margin, y: barY - 2, width: contentW, height: 14, color: rgb(0.95, 0.95, 0.95) });
+      curPg.drawText('서울온케어의원', { x: margin + 4, y: barY + 1, size: 7, font: boldFont, color: black });
+      curPg.drawText('TEL 031-000-0000  |  www.seouloncare.com', { x: margin + contentW - 200, y: barY + 1, size: 7, font, color: gray });
+
+      // ── 승인 스탬프 ──
+      if (approval.stampedAt) {
+        const stS = 55;
+        const stX = pageW - margin - stS - 5;
+        const stCY = fY + 50;
+
+        curPg.drawCircle({ x: stX + stS / 2, y: stCY, size: stS / 2, borderColor: rgb(0.8, 0.1, 0.1), borderWidth: 2, opacity: 0.7 });
+        curPg.drawText('승인', { x: stX + 16, y: stCY + 8, size: 11, font: boldFont, color: rgb(0.8, 0.1, 0.1) });
+        const stDate = approval.stampedAt ? `${approval.stampedAt.getFullYear()}-${String(approval.stampedAt.getMonth() + 1).padStart(2, '0')}-${String(approval.stampedAt.getDate()).padStart(2, '0')}` : '';
+        curPg.drawText(stDate, { x: stX + 8, y: stCY - 5, size: 7, font, color: rgb(0.8, 0.1, 0.1) });
+        if (approverName) curPg.drawText(approverName, { x: stX + 12, y: stCY - 16, size: 8, font: boldFont, color: rgb(0.8, 0.1, 0.1) });
       }
     }
 
