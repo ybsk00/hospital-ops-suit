@@ -15,6 +15,7 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { api } from '../../../../lib/api';
+import { useAuthStore } from '../../../../stores/auth';
 
 interface Faq {
   id: string;
@@ -60,6 +61,7 @@ const typeIcons: Record<string, typeof Youtube> = {
 };
 
 export default function ChatbotContentPage() {
+  const { accessToken } = useAuthStore();
   const [tab, setTab] = useState<TabType>('faqs');
   const [faqs, setFaqs] = useState<Faq[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -92,7 +94,7 @@ export default function ChatbotContentPage() {
         if (categoryFilter !== 'all') params.set('category', categoryFilter);
         params.set('limit', '100');
 
-        const res = await api<{ faqs: Faq[]; total: number }>(`/api/marketing/faqs?${params.toString()}`);
+        const res = await api<{ faqs: Faq[]; total: number }>(`/api/marketing/faqs?${params.toString()}`, { token: accessToken || undefined });
         if (res.success && res.data) {
           setFaqs(res.data.faqs);
         }
@@ -101,7 +103,7 @@ export default function ChatbotContentPage() {
         if (categoryFilter !== 'all') params.set('category', categoryFilter);
         params.set('limit', '100');
 
-        const res = await api<{ documents: Document[]; total: number }>(`/api/marketing/documents?${params.toString()}`);
+        const res = await api<{ documents: Document[]; total: number }>(`/api/marketing/documents?${params.toString()}`, { token: accessToken || undefined });
         if (res.success && res.data) {
           setDocuments(res.data.documents);
         }
@@ -144,11 +146,13 @@ export default function ChatbotContentPage() {
         await api(`/api/marketing/faqs/${editingFaq.id}`, {
           method: 'PUT',
           body: formData,
+          token: accessToken || undefined,
         });
       } else {
         await api('/api/marketing/faqs', {
           method: 'POST',
           body: formData,
+          token: accessToken || undefined,
         });
       }
       setShowModal(false);
@@ -166,6 +170,7 @@ export default function ChatbotContentPage() {
     try {
       await api(`/api/marketing/faqs/${id}`, {
         method: 'DELETE',
+        token: accessToken || undefined,
       });
       loadData();
     } catch (err) {

@@ -199,6 +199,13 @@
 
   btn.addEventListener('click', toggle);
 
+  // iframe 내부 챗봇에서 X 버튼 클릭 시 닫기
+  window.addEventListener('message', function (e) {
+    if (e.data && e.data.type === 'closeChatbot' && isOpen) {
+      toggle();
+    }
+  });
+
   // ESC 키로 닫기
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && isOpen) {

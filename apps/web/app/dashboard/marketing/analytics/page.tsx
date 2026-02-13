@@ -12,6 +12,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { api } from '../../../../lib/api';
+import { useAuthStore } from '../../../../stores/auth';
 
 interface AnalyticsData {
   totalChats: number;
@@ -23,6 +24,7 @@ interface AnalyticsData {
 }
 
 export default function ChatbotAnalyticsPage() {
+  const { accessToken } = useAuthStore();
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<'7d' | '30d' | '90d'>('30d');
@@ -36,7 +38,7 @@ export default function ChatbotAnalyticsPage() {
     try {
       const days = period === '7d' ? 7 : period === '30d' ? 30 : 90;
       const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-      const res = await api<AnalyticsData>(`/api/marketing/analytics?from=${from}`);
+      const res = await api<AnalyticsData>(`/api/marketing/analytics?from=${from}`, { token: accessToken || undefined });
       if (res.success && res.data) {
         setAnalytics(res.data);
       }

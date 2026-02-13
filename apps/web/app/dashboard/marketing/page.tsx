@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Megaphone, MessageCircle, FileText, BarChart3, ExternalLink, Copy, Check } from 'lucide-react';
 import { api } from '../../../lib/api';
+import { useAuthStore } from '../../../stores/auth';
 
 interface MarketingStats {
   faqCount: number;
@@ -11,6 +12,7 @@ interface MarketingStats {
 }
 
 export default function MarketingPage() {
+  const { accessToken } = useAuthStore();
   const [stats, setStats] = useState<MarketingStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -26,7 +28,7 @@ export default function MarketingPage() {
 
   const loadStats = async () => {
     try {
-      const res = await api<{ faqCount: number; docCount: number; sessionCount: number }>('/api/marketing/stats');
+      const res = await api<{ faqCount: number; docCount: number; sessionCount: number }>('/api/marketing/stats', { token: accessToken || undefined });
       if (res.success && res.data) {
         setStats(res.data);
       }

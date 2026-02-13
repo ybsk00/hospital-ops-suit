@@ -28,6 +28,7 @@ export default function PatientChatbotPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [showMobileVideos, setShowMobileVideos] = useState(false);
   const [relatedVideos, setRelatedVideos] = useState<YouTubeSource[]>([]);
+  const [avatarError, setAvatarError] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -190,9 +191,11 @@ export default function PatientChatbotPage() {
 
   const handleClose = () => {
     if (window.parent !== window) {
+      // iframe 임베드일 때: 부모 창에 닫기 메시지 전달
       window.parent.postMessage({ type: 'closeChatbot' }, '*');
     } else {
-      window.close();
+      // 브라우저 탭에서 직접 접속한 경우: 병원 홈페이지로 이동
+      window.location.href = 'https://www.seouloncare.com';
     }
   };
 
@@ -265,7 +268,11 @@ export default function PatientChatbotPage() {
                     {/* 아바타 */}
                     {message.role === 'assistant' ? (
                       <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#E0F2F1] to-[#B2DFDB] flex-shrink-0 flex items-center justify-center shadow-lg mt-1 ring-2 ring-white/40 overflow-hidden border border-white/50">
-                        <img alt="Oncare Bot" className="w-full h-full object-cover scale-110 translate-y-1" src={BOT_AVATAR} />
+                        {avatarError ? (
+                          <span className="material-icons-outlined text-[#2A9D8F] text-2xl">smart_toy</span>
+                        ) : (
+                          <img alt="Oncare Bot" className="w-full h-full object-cover scale-110 translate-y-1" src={BOT_AVATAR} onError={() => setAvatarError(true)} />
+                        )}
                       </div>
                     ) : (
                       <div className="w-12 h-12 rounded-full bg-gradient-to-br from-gray-50 to-gray-200 flex-shrink-0 flex items-center justify-center shadow-lg mt-1 overflow-hidden ring-2 ring-gray-200 border border-white/40">

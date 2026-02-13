@@ -48,6 +48,8 @@ export const env = {
   LLM_RETRY_DELAY_MS: parseInt(optionalEnv('LLM_RETRY_DELAY_MS', '2000'), 10),
   LLM_EMBEDDING_MODEL: optionalEnv('LLM_EMBEDDING_MODEL', 'text-embedding-004'),
   GEMINI_API_KEY: optionalEnv('GEMINI_API_KEY', ''),
+  YOUTUBE_API_KEY: optionalEnv('YOUTUBE_API_KEY', ''),
+  YOUTUBE_CHANNEL_ID: optionalEnv('YOUTUBE_CHANNEL_ID', ''),
 
   // File Storage
   FILE_STORAGE_PATH: optionalEnv('FILE_STORAGE_PATH', './storage'),

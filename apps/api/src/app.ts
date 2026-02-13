@@ -26,6 +26,7 @@ import labUploadRoutes from './routes/labUploads';
 import labApprovalRoutes from './routes/labApprovals';
 import marketingRoutes from './routes/marketing';
 import patientChatbotRoutes from './routes/patientChatbot';
+import youtubeRoutes from './routes/youtube';
 
 const app = express();
 
@@ -83,6 +84,7 @@ app.use('/api/lab-uploads', labUploadRoutes);
 app.use('/api/lab-approvals', labApprovalRoutes);
 app.use('/api/marketing', marketingRoutes);
 app.use('/api/patient-chatbot', patientChatbotRoutes);
+app.use('/api/youtube', youtubeRoutes);
 
 // 헬스 체크
 app.get('/health', (_req, res) => {

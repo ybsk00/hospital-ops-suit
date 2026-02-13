@@ -881,18 +881,19 @@ model MarketingDocument {
 }
 
 model HospitalFaq {
-  id         String              @id @default(uuid())
-  question   String              @db.Text
-  answer     String              @db.Text
-  metadata   Json?
-  vector     Unsupported("vector(768)")
-  category   MarketingCategory?
-  sourceUrl  String?
-  title      String?
-  isActive   Boolean             @default(true)
-  createdAt  DateTime            @default(now())
-  updatedAt  DateTime            @updatedAt
-  deletedAt  DateTime?
+  id            String              @id @default(uuid())
+  question      String              @db.Text
+  answer        String              @db.Text
+  metadata      Json?
+  vector        Unsupported("vector(768)")
+  category      MarketingCategory?
+  sourceUrl     String?
+  sourceVideoId String?
+  title         String?
+  isActive      Boolean             @default(true)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  deletedAt     DateTime?
 
   @@index([category])
 }
