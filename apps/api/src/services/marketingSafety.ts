@@ -21,8 +21,8 @@ const OUTPUT_FORBIDDEN = [
 const RELEVANCE_MIN_SIMILARITY = 0.67;
 const MEDICAL_DISCLAIMER = '⚠️ 본 상담 내용은 참고용 정보이며, 의학적 진단이나 처방을 대신할 수 없습니다. 정확한 진단과 치료를 위해 반드시 전문의와 상담하시기 바랍니다.';
 const NO_INFO_MESSAGE = '죄송합니다. 해당 내용에 대한 병원 공식 자료를 찾을 수 없습니다. 정확한 상담은 서울온케어의원(☎ 1577-7998)으로 전화 부탁드립니다.';
-const FALLBACK_PREFIX = '📋 [일반 의학 상식 안내]\n\n';
-const FALLBACK_DISCLAIMER = '⚠️ 주의: 위 내용은 서울온케어의원의 공식 자료가 아닌 일반적인 의학 상식에 기반한 참고 정보입니다. 개인의 건강 상태에 따라 다를 수 있으므로, 정확한 진단과 치료를 위해 서울온케어의원(☎ 1577-7998)에 내원하시거나 전화로 상담받으시기 바랍니다.';
+const FALLBACK_PREFIX = '';
+const FALLBACK_DISCLAIMER = '💡 위 내용은 일반적인 의학 정보이며, 개인별 상태에 따라 다를 수 있습니다.';
 
 export interface SearchResult {
   id: string;
