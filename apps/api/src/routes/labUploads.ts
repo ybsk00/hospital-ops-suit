@@ -793,7 +793,7 @@ router.get(
     const commentFontSize = 9;
     const commentLineHeight = 13;
     const commentLines = commentText
-      ? wrapTextByFontWidth(commentText, font, commentFontSize, contentW)
+      ? wrapTextByFontWidth(commentText, font, commentFontSize, contentW - 20)
       : [];
 
     // 총 페이지 수 사전 계산
@@ -934,6 +934,7 @@ router.get(
     };
 
     let tableY = drawResultHeader(currentPage, y);
+    let currentPageTableTopY = y; // 현재 페이지 결과 테이블 상단 Y (세로선 그리기용)
 
     // 테이블 데이터
     for (let idx = 0; idx < analysis.labResults.length; idx++) {
@@ -943,6 +944,9 @@ router.get(
       if (tableY - rRowH < minYForTable) {
         // 현재 페이지 테이블 하단 닫기선
         currentPage.drawLine({ start: { x: rTableX, y: tableY }, end: { x: rTableX + rTableW, y: tableY }, thickness: 0.5, color: black });
+        // 현재 페이지 좌우 세로선
+        currentPage.drawLine({ start: { x: rTableX, y: currentPageTableTopY }, end: { x: rTableX, y: tableY }, thickness: 0.5, color: black });
+        currentPage.drawLine({ start: { x: rTableX + rTableW, y: currentPageTableTopY }, end: { x: rTableX + rTableW, y: tableY }, thickness: 0.5, color: black });
 
         currentPage = pdfDoc.addPage([pageW, pageH]);
         pageCount++;
@@ -955,6 +959,7 @@ router.get(
         currentPage.drawText(pgText, { x: pageW - margin - pgTextW, y: ny + 2, size: 9, font, color: gray });
         ny -= 25;
 
+        currentPageTableTopY = ny; // 새 페이지의 테이블 상단 Y 갱신
         tableY = drawResultHeader(currentPage, ny);
       }
 
@@ -1019,9 +1024,9 @@ router.get(
 
     // 테이블 하단 닫기선
     currentPage.drawLine({ start: { x: rTableX, y: tableY }, end: { x: rTableX + rTableW, y: tableY }, thickness: 0.5, color: black });
-    // 좌우 세로선 전체
-    currentPage.drawLine({ start: { x: rTableX, y: y }, end: { x: rTableX, y: tableY }, thickness: 0.5, color: black });
-    currentPage.drawLine({ start: { x: rTableX + rTableW, y: y }, end: { x: rTableX + rTableW, y: tableY }, thickness: 0.5, color: black });
+    // 좌우 세로선 (현재 페이지 범위만)
+    currentPage.drawLine({ start: { x: rTableX, y: currentPageTableTopY }, end: { x: rTableX, y: tableY }, thickness: 0.5, color: black });
+    currentPage.drawLine({ start: { x: rTableX + rTableW, y: currentPageTableTopY }, end: { x: rTableX + rTableW, y: tableY }, thickness: 0.5, color: black });
 
     y = tableY - 15;
 
