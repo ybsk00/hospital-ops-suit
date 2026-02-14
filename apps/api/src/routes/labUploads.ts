@@ -793,7 +793,7 @@ router.get(
     const commentFontSize = 9;
     const commentLineHeight = 13;
     const commentLines = commentText
-      ? wrapTextByFontWidth(commentText, font, commentFontSize, contentW - 20)
+      ? wrapText(commentText, 55)
       : [];
 
     // 총 페이지 수 사전 계산
