@@ -787,6 +787,15 @@ router.get(
     const approvalDate = analysis.approvedAt ? formatShortDateTime(analysis.approvedAt) : '';
     const approverName = sanitizeForPdf(analysis.approvedBy?.name) || '';
 
+    // AI분석 소견 줄바꿈 사전 계산 (폰트 실제 너비 기반)
+    const rawComment = analysis.doctorComment || analysis.aiComment;
+    const commentText = sanitizeForPdf(rawComment);
+    const commentFontSize = 9;
+    const commentLineHeight = 13;
+    const commentLines = commentText
+      ? wrapTextByFontWidth(commentText, font, commentFontSize, contentW)
+      : [];
+
     // 총 페이지 수 사전 계산
     const resultsPerFirstPage = 28;
     const resultsPerNextPage = 38;
@@ -794,6 +803,15 @@ router.get(
     let totalPages = 1;
     if (totalResults > resultsPerFirstPage) {
       totalPages += Math.ceil((totalResults - resultsPerFirstPage) / resultsPerNextPage);
+    }
+    // 분석소견 추가 페이지 계산
+    if (commentLines.length > 0) {
+      const commentTotalH = commentLines.length * commentLineHeight + 50;
+      const estimatedRemaining = 150; // 결과 테이블 후 남은 공간 추정
+      if (commentTotalH > estimatedRemaining) {
+        const usableH = pageH - margin - 90;
+        totalPages += Math.ceil(commentTotalH / usableH);
+      }
     }
 
     let currentPage = pdfDoc.addPage([pageW, pageH]);
@@ -1008,12 +1026,8 @@ router.get(
     y = tableY - 15;
 
     // ── 분석 소견 ──
-    const rawComment = analysis.doctorComment || analysis.aiComment;
-    const comment = sanitizeForPdf(rawComment);
-
-    if (comment) {
-      const commentLines = wrapText(comment, 75);
-      const commentHeight = commentLines.length * 13 + 35;
+    if (commentLines.length > 0) {
+      const commentHeight = commentLines.length * commentLineHeight + 50;
 
       if (y < commentHeight + 100) {
         currentPage = pdfDoc.addPage([pageW, pageH]);
@@ -1034,8 +1048,8 @@ router.get(
           pageCount++;
           y = pageH - margin;
         }
-        currentPage.drawText(line, { x: margin, y, size: 9, font, color: rgb(0.25, 0.25, 0.25) });
-        y -= 13;
+        currentPage.drawText(line, { x: margin, y, size: commentFontSize, font, color: rgb(0.25, 0.25, 0.25) });
+        y -= commentLineHeight;
       }
     }
 
@@ -1216,6 +1230,59 @@ function wrapText(text: string, maxChars: number): string[] {
       remaining = remaining.substring(breakPoint).trim();
     }
     if (remaining) lines.push(remaining);
+  }
+
+  return lines;
+}
+
+// 폰트 실제 너비 기반 텍스트 줄바꿈 (한글 등 넓은 문자 지원)
+function wrapTextByFontWidth(text: string, fontObj: any, fontSize: number, maxWidth: number): string[] {
+  const lines: string[] = [];
+  const paragraphs = text.split('\n');
+
+  for (const para of paragraphs) {
+    if (!para.trim()) {
+      lines.push('');
+      continue;
+    }
+
+    let remaining = para;
+    while (remaining.length > 0) {
+      const fullWidth = fontObj.widthOfTextAtSize(remaining, fontSize);
+      if (fullWidth <= maxWidth) {
+        lines.push(remaining);
+        break;
+      }
+
+      // 이진탐색으로 maxWidth에 맞는 최대 글자 수 찾기
+      let lo = 1;
+      let hi = remaining.length;
+      let bestBreak = 1;
+
+      while (lo <= hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        const w = fontObj.widthOfTextAtSize(remaining.substring(0, mid), fontSize);
+        if (w <= maxWidth) {
+          bestBreak = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+
+      // 공백 위치에서 줄바꿈 우선
+      let breakAt = bestBreak;
+      const spaceIdx = remaining.lastIndexOf(' ', bestBreak);
+      if (spaceIdx > bestBreak * 0.3) {
+        breakAt = spaceIdx;
+      }
+
+      // 최소 1글자는 진행 (무한루프 방지)
+      if (breakAt <= 0) breakAt = 1;
+
+      lines.push(remaining.substring(0, breakAt).trimEnd());
+      remaining = remaining.substring(breakAt).trimStart();
+    }
   }
 
   return lines;
