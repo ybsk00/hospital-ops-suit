@@ -125,11 +125,11 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const PRIORITY_OPTIONS = [
-  { value: 'EMERGENCY', label: '응급실 내원', stamp: '🔴 응급실 내원', color: 'bg-red-500 text-white' },
-  { value: 'URGENT', label: '빠른 시일내 병원 내원', stamp: '🟠 빠른 시일내 병원 내원', color: 'bg-orange-500 text-white' },
+  { value: 'EMERGENCY', label: '입원치료요청', stamp: '🔴 입원치료요청', color: 'bg-red-500 text-white' },
+  { value: 'URGENT', label: '촉탁진료요청', stamp: '🟠 촉탁진료요청', color: 'bg-orange-500 text-white' },
   { value: 'RECHECK', label: '재검사 요망', stamp: '🟡 재검사 요망', color: 'bg-yellow-500 text-white' },
-  { value: 'CAUTION', label: '건강유의', stamp: '🟢 건강유의', color: 'bg-green-500 text-white' },
-  { value: 'NORMAL', label: '특이사항 없음', stamp: '⚪ 특이사항 없음', color: 'bg-slate-400 text-white' },
+  { value: 'CAUTION', label: '촉탁진료대기', stamp: '🟢 촉탁진료대기', color: 'bg-green-500 text-white' },
+  { value: 'NORMAL', label: '특이사항없음', stamp: '⚪ 특이사항없음', color: 'bg-slate-400 text-white' },
 ];
 
 const STAMP_COLORS: Record<string, string> = {

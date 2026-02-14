@@ -1144,10 +1144,10 @@ router.get(
 // 헬퍼 함수들
 function getPriorityStampText(priority: string): string {
   switch (priority) {
-    case 'EMERGENCY': return '응급실 방문 필요';
-    case 'URGENT': return '병원 내원 요망';
+    case 'EMERGENCY': return '입원치료요청';
+    case 'URGENT': return '촉탁진료요청';
     case 'RECHECK': return '재검사 요망';
-    case 'CAUTION': return '건강 유의';
+    case 'CAUTION': return '촉탁진료대기';
     default: return '';
   }
 }

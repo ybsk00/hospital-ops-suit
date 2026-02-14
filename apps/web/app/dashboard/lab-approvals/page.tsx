@@ -68,11 +68,11 @@ const PRIORITY_COLORS: Record<string, string> = {
 };
 
 const PRIORITY_LABELS: Record<string, string> = {
-  EMERGENCY: '응급실 방문',
-  URGENT: '병원내원요망',
+  EMERGENCY: '입원치료요청',
+  URGENT: '촉탁진료요청',
   RECHECK: '재검사요망',
-  CAUTION: '건강유의',
-  NORMAL: '정상',
+  CAUTION: '촉탁진료대기',
+  NORMAL: '특이사항없음',
 };
 
 /* ------------------------------------------------------------------ */

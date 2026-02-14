@@ -691,11 +691,11 @@ function calculateDeviation(value: number, refLow?: number, refHigh?: number): n
 
 /**
  * 자동 분류: 우선순위 + 스탬프 결정 (% 편차 기반)
- * - ±10% 이내: NORMAL (특이사항 없음)
- * - ±10%~30%: CAUTION (건강유의)
+ * - ±10% 이내: NORMAL (특이사항없음)
+ * - ±10%~30%: CAUTION (촉탁진료대기)
  * - ±30%~50%: RECHECK (재검사 요망)
- * - ±50%~100%: URGENT (빠른 시일내 병원 내원)
- * - ±100% 초과: EMERGENCY (응급실 내원)
+ * - ±50%~100%: URGENT (촉탁진료요청)
+ * - ±100% 초과: EMERGENCY (입원치료요청)
  */
 function classifyPriority(
   aiComment: string,
@@ -716,16 +716,16 @@ function classifyPriority(
   // CRITICAL 플래그가 있으면 응급
   const hasCritical = results.some((r) => r.flag === 'CRITICAL');
   if (hasCritical) {
-    return { priority: 'EMERGENCY', stamp: '🔴 응급실 내원' };
+    return { priority: 'EMERGENCY', stamp: '🔴 입원치료요청' };
   }
 
   // % 편차 기반 분류
   if (maxDeviation > 100) {
-    return { priority: 'EMERGENCY', stamp: '🔴 응급실 내원' };
+    return { priority: 'EMERGENCY', stamp: '🔴 입원치료요청' };
   }
 
   if (maxDeviation > 50) {
-    return { priority: 'URGENT', stamp: '🟠 빠른 시일내 병원 내원' };
+    return { priority: 'URGENT', stamp: '🟠 촉탁진료요청' };
   }
 
   if (maxDeviation > 30) {
@@ -733,8 +733,8 @@ function classifyPriority(
   }
 
   if (maxDeviation > 10) {
-    return { priority: 'CAUTION', stamp: '🟢 건강유의' };
+    return { priority: 'CAUTION', stamp: '🟢 촉탁진료대기' };
   }
 
-  return { priority: 'NORMAL', stamp: '⚪ 특이사항 없음' };
+  return { priority: 'NORMAL', stamp: '⚪ 특이사항없음' };
 }
