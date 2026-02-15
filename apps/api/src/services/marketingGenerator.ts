@@ -73,10 +73,10 @@ const GENERAL_PROMPT = `당신은 서울온케어의원의 **상담 실장 온�
 1. **친절함**: 항상 밝고 정중한 태도로 응대하세요.
 2. **역할 제한**: 의학적인 상담이나 진단은 하지 않습니다. 의학적인 질문이 들어오면 "죄송하지만, 그 부분은 원장님 진료 시 자세히 상담받으실 수 있습니다."라고 안내하세요.
 3. **병원 안내**: 진료 시간, 위치 등은 알고 있는 범위 내에서 안내하되, 모르는 내용은 "병원으로 전화 주시면 친절히 안내해 드리겠습니다."라고 답변하세요.
-4. **간결함**: 답변은 공백 포함 250자 이내로 핵심 1-2가지 포인트만 간결하게 전달하세요.`;
+4. **간결함**: 답변은 공백 포함 400자 이내로 핵심 포인트를 간결하게 전달하세요.`;
 
 // 의료 응답 프롬프트 (AI 상담 전문의 페르소나)
-const MEDICAL_PROMPT = `당신은 서울온케어의원의 **AI 상담 전문의 온케어봇**입니다.
+const MEDICAL_PROMPT = `당신은 서울온케어의원의 **상담 실장 온케어봇**입니다.
 현재 상담 주제는 **{category_name}**입니다.
 
 환자(사용자)의 질문에 대해 아래 [Context]를 바탕으로 친절하고 전문적으로 답변해 주세요.
@@ -91,11 +91,12 @@ const MEDICAL_PROMPT = `당신은 서울온케어의원의 **AI 상담 전문의
 {question}
 
 **답변 가이드라인 (필수 준수)**:
-1. **문맥 필터링 (중요)**: 위 [Context]에는 질문과 관련 없는 내용이 섞여 있을 수 있습니다. **반드시 질문과 직접적으로 관련된 내용만 골라서** 답변하세요. 단순히 단어가 같다고 해서 관련 없는 내용을 억지로 연결하지 마세요. **절대로 "자료에 따르면", "참고 자료에 의하면" 등 출처를 언급하거나 각주를 달지 마세요. 자연스러운 대화체로만 답변하세요.**
+1. **문맥 필터링 (중요)**: 위 [Context]에는 질문과 관련 없는 내용이 섞여 있을 수 있습니다. **반드시 질문과 직접적으로 관련된 내용만 골라서** 답변하세요. 단순히 단어가 같다고 해서 관련 없는 내용을 억지로 연결하지 마세요. "자료에 따르면", "참고 자료에 의하면" 같은 딱딱한 인용 표현은 피하고 자연스러운 대화체로 답변하세요. **단, [Context]에 PubMed 논문 출처(저자, 학술지, PMID)가 포함된 경우, 답변 마지막에 '(출처: 저자. 학술지. 연도. PMID: xxxxx)' 형태로 근거를 반드시 표시하세요.**
 2. **페르소나**: 당신은 의사 선생님처럼 공감하며 전문적인 어조를 사용합니다. 하지만 **절대로 확정적인 진단이나 처방을 내려서는 안 됩니다.**
 3. **안전장치**: "진단", "처방", "약물 추천" 등의 요청에는 "구체적인 진단과 처방은 내원하시어 전문의와 상담이 필요합니다"라는 취지로 안내하세요.
 4. **근거 기반**: 제공된 Context에 질문에 대한 답이 명확히 없다면, 솔직하게 "해당 내용은 병원 자료에 없어 정확한 답변이 어렵습니다"라고 말하세요. 지어내지 마세요.
-5. **길이 제한**: 답변은 공백 포함 250자 이내로 핵심 1-2가지 포인트만 간결하게 전달하세요.
+5. **길이 제한**: 답변은 공백 포함 400자 이내로 핵심 포인트를 전달하세요. 논문 출처가 있으면 반드시 포함하세요.
+6. **대화 연속성**: [Previous Conversation]의 이전 대화를 참고하여, 사용자가 후속 질문을 하면 이전에 답변한 내용을 기반으로 구체적으로 설명하세요.
 
 **법적 고지 (답변 하단에 필수 포함)**:
 "본 상담 내용은 참고용이며, 의학적 진단이나 처방을 대신할 수 없습니다."`;
@@ -211,13 +212,20 @@ export class MarketingGenerator {
   private formatContext(docs: SearchResult[]): string {
     return docs
       .map((doc) => {
-        return doc.content || `Q: ${doc.question}\nA: ${doc.answer}`;
+        const base = doc.content || `Q: ${doc.question}\nA: ${doc.answer}`;
+        // PubMed 논문 출처가 metadata에 있으면 Context에 명시적 포함
+        const meta = doc.metadata as Record<string, unknown> | undefined;
+        if (meta?.sourceType === 'pubmed' && meta?.pmid) {
+          const citation = `[출처: ${meta.authors || ''}. ${meta.journal || ''}. ${meta.year || ''}. PMID: ${meta.pmid}]`;
+          return `${base}\n${citation}`;
+        }
+        return base;
       })
       .join('\n\n---\n\n');
   }
 
   /**
-   * 일반 응답 생성 (스트리밍)
+   * 일반 응답 생성 (스트리밍) — multi-turn 대화 지원
    */
   async *generateGeneralResponse(
     query: string,
@@ -226,13 +234,29 @@ export class MarketingGenerator {
     const ai = getGenAI();
     const model = ai.getGenerativeModel({ model: this.model });
 
-    const prompt = GENERAL_PROMPT
+    const systemPrompt = GENERAL_PROMPT
       .replace('{history}', this.formatHistory(history))
       .replace('{question}', query);
 
+    // Gemini multi-turn
+    const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+    contents.push({ role: 'user', parts: [{ text: systemPrompt }] });
+
+    if (history && history.length > 0) {
+      contents.push({ role: 'model', parts: [{ text: '네, 무엇이든 편하게 물어보세요.' }] });
+      for (const h of history.slice(-6)) {
+        const role = h.role === 'user' ? 'user' : 'model';
+        contents.push({ role, parts: [{ text: h.content }] });
+      }
+      const lastRole = contents[contents.length - 1].role;
+      if (lastRole === 'model') {
+        contents.push({ role: 'user', parts: [{ text: query }] });
+      }
+    }
+
     try {
       const result = await model.generateContentStream({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        contents,
         generationConfig: { temperature: GENERAL_TEMPERATURE },
       });
 
@@ -247,7 +271,7 @@ export class MarketingGenerator {
   }
 
   /**
-   * 의료 응답 생성 (스트리밍)
+   * 의료 응답 생성 (스트리밍) — multi-turn 대화 지원
    */
   async *generateMedicalResponse(
     query: string,
@@ -262,15 +286,39 @@ export class MarketingGenerator {
       ? '암 보조 치료 (Cancer Support Treatment)'
       : '자율신경 치료 (Autonomic Nerve Treatment)';
 
-    const prompt = MEDICAL_PROMPT
+    // 시스템 프롬프트 (context + 가이드라인)
+    const systemPrompt = MEDICAL_PROMPT
       .replace('{category_name}', categoryName)
       .replace('{history}', this.formatHistory(history))
       .replace('{context}', this.formatContext(context))
       .replace('{question}', query);
 
+    // Gemini multi-turn: 이전 대화를 실제 대화 턴으로 전달
+    const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+
+    // 시스템 프롬프트를 첫 번째 user 메시지로
+    contents.push({ role: 'user', parts: [{ text: systemPrompt }] });
+
+    // 이전 대화 이력을 실제 multi-turn으로 추가
+    if (history && history.length > 0) {
+      // 시스템 프롬프트에 대한 모델 응답 (대화 시작점)
+      contents.push({ role: 'model', parts: [{ text: '네, 이해했습니다. 상담을 시작하겠습니다.' }] });
+
+      for (const h of history.slice(-6)) {
+        const role = h.role === 'user' ? 'user' : 'model';
+        contents.push({ role, parts: [{ text: h.content }] });
+      }
+
+      // 마지막이 user가 아니면 현재 질문 추가
+      const lastRole = contents[contents.length - 1].role;
+      if (lastRole === 'model') {
+        contents.push({ role: 'user', parts: [{ text: query }] });
+      }
+    }
+
     try {
       const result = await model.generateContentStream({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        contents,
         generationConfig: { temperature: MEDICAL_TEMPERATURE },
       });
 
@@ -294,7 +342,7 @@ export class MarketingGenerator {
   }
 
   /**
-   * 폴백 응답 생성 (스트리밍)
+   * 폴백 응답 생성 (스트리밍) — multi-turn 대화 지원
    */
   async *generateFallback(
     query: string,
@@ -305,13 +353,29 @@ export class MarketingGenerator {
     const ai = getGenAI();
     const model = ai.getGenerativeModel({ model: this.model });
 
-    const prompt = FALLBACK_PROMPT
+    const systemPrompt = FALLBACK_PROMPT
       .replace('{history}', this.formatHistory(history))
       .replace('{question}', query);
 
+    // Gemini multi-turn
+    const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+    contents.push({ role: 'user', parts: [{ text: systemPrompt }] });
+
+    if (history && history.length > 0) {
+      contents.push({ role: 'model', parts: [{ text: '네, 건강 관련 궁금하신 점을 알려주세요.' }] });
+      for (const h of history.slice(-6)) {
+        const role = h.role === 'user' ? 'user' : 'model';
+        contents.push({ role, parts: [{ text: h.content }] });
+      }
+      const lastRole = contents[contents.length - 1].role;
+      if (lastRole === 'model') {
+        contents.push({ role: 'user', parts: [{ text: query }] });
+      }
+    }
+
     try {
       const result = await model.generateContentStream({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        contents,
         generationConfig: { temperature: FALLBACK_TEMPERATURE },
       });
 
