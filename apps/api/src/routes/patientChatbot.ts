@@ -124,10 +124,27 @@ router.post(
       const gen = getGenerator();
       const ret = getRetriever();
 
+      // 대화 맥락을 반영한 RAG 검색 쿼리 생성
+      // 후속 질문("그건 어떤가요?", "다른 암에도 효과가?")일 때 이전 주제를 포함
+      let ragQuery = query;
+      if (history.length > 0) {
+        const recentUserMsgs = history
+          .filter((h) => h.role === 'user')
+          .slice(-2)
+          .map((h) => h.content);
+        // 현재 질문이 짧거나 대명사/후속 표현이 있으면 이전 질문 맥락 추가
+        const isFollowUp = query.length < 30 ||
+          /그[건것거]|이[건것거]|위[의에]|말고|외에|다른|또|더|어떤|효과|도움/.test(query);
+        if (isFollowUp && recentUserMsgs.length > 0) {
+          ragQuery = `${recentUserMsgs[recentUserMsgs.length - 1]} ${query}`;
+          console.log(`[PatientChatbot] RAG query augmented: "${ragQuery.slice(0, 80)}..."`);
+        }
+      }
+
       // 1. 카테고리 분류 + 검색 병렬 실행
       const [classifiedCategory, contextDocs] = await Promise.all([
         requestedCategory === 'auto' ? gen.classifyQuery(query) : Promise.resolve(requestedCategory as 'cancer' | 'nerve' | 'general'),
-        ret.retrieve(query),
+        ret.retrieve(ragQuery),
       ]);
 
       finalCategory = classifiedCategory;
