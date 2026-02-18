@@ -40,14 +40,10 @@ export const env = {
   // CORS
   CORS_ORIGIN: optionalEnv('CORS_ORIGIN', 'http://localhost:3000'),
 
-  // AI / LLM
-  LLM_PROVIDER: optionalEnv('LLM_PROVIDER', 'openai'),
-  LLM_API_KEY: optionalEnv('LLM_API_KEY', ''),
-  LLM_MODEL: optionalEnv('LLM_MODEL', 'gpt-4o'),
-  LLM_MAX_RETRIES: parseInt(optionalEnv('LLM_MAX_RETRIES', '3'), 10),
-  LLM_RETRY_DELAY_MS: parseInt(optionalEnv('LLM_RETRY_DELAY_MS', '2000'), 10),
-  LLM_EMBEDDING_MODEL: optionalEnv('LLM_EMBEDDING_MODEL', 'text-embedding-004'),
+  // AI / LLM (Gemini 통일)
   GEMINI_API_KEY: optionalEnv('GEMINI_API_KEY', ''),
+  GEMINI_CHAT_MODEL: optionalEnv('GEMINI_CHAT_MODEL', 'gemini-2.5-flash'),  // Phase 7: 챗봇/AI소견서/혈액검사 LLM
+  GEMINI_EMBEDDING_MODEL: optionalEnv('GEMINI_EMBEDDING_MODEL', 'gemini-embedding-001'),
   YOUTUBE_API_KEY: optionalEnv('YOUTUBE_API_KEY', ''),
   YOUTUBE_CHANNEL_ID: optionalEnv('YOUTUBE_CHANNEL_ID', ''),
 

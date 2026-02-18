@@ -1,17 +1,17 @@
-import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { prisma } from '../lib/prisma';
 import { env } from '../config/env';
 
-let openai: OpenAI | null = null;
-function getOpenAI(): OpenAI {
-  if (!openai) {
-    openai = new OpenAI({ apiKey: env.LLM_API_KEY });
+let genAI: GoogleGenerativeAI | null = null;
+function getGemini(): GoogleGenerativeAI {
+  if (!genAI) {
+    genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY || '');
   }
-  return openai;
+  return genAI;
 }
 
 /**
- * AI 소견서 자동 생성 (GPT-4o)
+ * AI 소견서 자동 생성 (Gemini 2.5 Flash)
  * - 환자정보, 문진결과, 검사결과를 종합하여 소견서 초안 작성
  * - 완료 시 status를 AI_REVIEWED로 변경
  */
@@ -89,18 +89,18 @@ export async function generateAiReport(reportId: string): Promise<void> {
 
   const userMessage = `${patientInfo}${visitInfo}${questionnaireInfo}${labInfo}\n\n위 정보를 바탕으로 의료 소견서 초안을 작성해 주세요.`;
 
-  const client = getOpenAI();
-  const completion = await client.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userMessage },
-    ],
-    temperature: 0.3,
-    max_tokens: 2000,
+  const gemini = getGemini();
+  const model = gemini.getGenerativeModel({
+    model: env.GEMINI_CHAT_MODEL || 'gemini-2.5-flash',
   });
 
-  const draftText = completion.choices[0]?.message?.content || '소견서 생성에 실패했습니다.';
+  const result = await model.generateContent({
+    contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+    systemInstruction: systemPrompt,
+    generationConfig: { temperature: 0.3, maxOutputTokens: 2000 },
+  });
+
+  const draftText = result.response.text() || '소견서 생성에 실패했습니다.';
 
   await prisma.aiReport.update({
     where: { id: reportId },

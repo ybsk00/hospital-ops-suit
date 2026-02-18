@@ -124,6 +124,16 @@ INSERT INTO "DepartmentPermission" ("departmentId", "resource", "action", "scope
   ('dept-homecare', 'DASHBOARD',       'READ',  'OWN_DEPT')
 ON CONFLICT ("departmentId", "resource", "action") DO NOTHING;
 
+-- Phase 7: 원무과·간호부·진료과 모두 외래예약+처치 WRITE 권한
+INSERT INTO "DepartmentPermission" ("departmentId", "resource", "action", "scope") VALUES
+  -- 원무과: 외래예약 + 처치 WRITE
+  ('dept-admin',   'PROCEDURES',   'READ',  'OWN_DEPT'),
+  ('dept-admin',   'PROCEDURES',   'WRITE', 'OWN_DEPT'),
+  -- 간호부: 외래예약 WRITE (처치 WRITE는 위에서 이미 있음)
+  ('dept-nursing', 'APPOINTMENTS', 'READ',  'OWN_DEPT'),
+  ('dept-nursing', 'APPOINTMENTS', 'WRITE', 'OWN_DEPT')
+ON CONFLICT ("departmentId", "resource", "action") DO NOTHING;
+
 -- ──────────────────────────────────────────────
 -- 5. 병동 / 호실 / 베드
 -- ──────────────────────────────────────────────
@@ -153,10 +163,15 @@ ON CONFLICT ("roomId", "label") DO NOTHING;
 -- ──────────────────────────────────────────────
 -- 6. 처치 카탈로그 (ProcedureCatalog)
 -- ──────────────────────────────────────────────
-INSERT INTO "ProcedureCatalog" ("name", "category", "defaultUnitPrice") VALUES
-  ('수액주사',  '주사', 15000),
-  ('상처소독',  '처치', 8000),
-  ('물리치료',  '재활', 20000)
+INSERT INTO "ProcedureCatalog" ("name", "code", "category", "defaultDuration", "defaultUnitPrice") VALUES
+  ('수액주사',       'INJECTION',       '주사', 15, 15000),
+  ('상처소독',       NULL,              '처치', 20, 8000),
+  ('물리치료',       NULL,              '재활', 30, 20000),
+  ('도수치료',       'MANUAL_THERAPY',  '재활', 30, 25000),
+  ('고주파온열치료', 'RF_HYPERTHERMIA', '처치', 60, 30000),
+  ('산소치료',       'O2_THERAPY',      '처치', 30, 15000),
+  ('주사치료',       NULL,              '주사', 15, 12000),
+  ('레이저치료',     'LASER',           '처치', 20, 20000)
 ON CONFLICT ("name") DO NOTHING;
 
 -- ──────────────────────────────────────────────

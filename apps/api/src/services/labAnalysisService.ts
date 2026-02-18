@@ -1,21 +1,10 @@
-import OpenAI from 'openai';
 import * as XLSX from 'xlsx';
 import fs from 'fs';
-import path from 'path';
 import { prisma } from '../lib/prisma';
 import { env } from '../config/env';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// OpenAI 클라이언트
-let openai: OpenAI | null = null;
-function getOpenAI(): OpenAI {
-  if (!openai) {
-    openai = new OpenAI({ apiKey: env.LLM_API_KEY });
-  }
-  return openai;
-}
-
-// Gemini 클라이언트 (임베딩 + Vision)
+// Gemini 클라이언트 (LLM + 임베딩 + Vision)
 let genai: GoogleGenerativeAI | null = null;
 function getGemini(): GoogleGenerativeAI {
   if (!genai) {
@@ -373,14 +362,12 @@ async function processOnePatient(uploadId: string, parsed: ParsedResult): Promis
 }
 
 /**
- * AI 코멘트 생성 (GPT-4o)
+ * AI 코멘트 생성 (Gemini 2.5 Flash)
  */
 async function generateAiComment(
   patientName: string,
   results: Array<{ analyte: string; value: number; unit: string; refLow?: number; refHigh?: number; flag: string }>
 ): Promise<string> {
-  const client = getOpenAI();
-
   const hasEmergency = results.some((r) => r.flag === 'CRITICAL');
 
   const systemPrompt = `당신은 암요양병원의 검사결과 분석 보조 도구입니다.
@@ -414,17 +401,18 @@ ${results.map((r) =>
 
 위 검사결과에 대한 의료진 참고용 코멘트를 작성해 주세요.`;
 
-  const completion = await client.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userMessage },
-    ],
-    temperature: 0.3,
-    max_tokens: 1000,
+  const gemini = getGemini();
+  const model = gemini.getGenerativeModel({
+    model: env.GEMINI_CHAT_MODEL || 'gemini-2.5-flash',
   });
 
-  return completion.choices[0]?.message?.content || '코멘트 생성 실패';
+  const result = await model.generateContent({
+    contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+    systemInstruction: systemPrompt,
+    generationConfig: { temperature: 0.3, maxOutputTokens: 1000 },
+  });
+
+  return result.response.text() || '코멘트 생성 실패';
 }
 
 /**
@@ -440,7 +428,7 @@ async function saveToVectorDB(
 
   // Gemini 임베딩
   const gemini = getGemini();
-  const embeddingModel = gemini.getGenerativeModel({ model: 'text-embedding-004' });
+  const embeddingModel = gemini.getGenerativeModel({ model: env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001' });
   const embeddingResult = await embeddingModel.embedContent(content);
   const vector = embeddingResult.embedding.values;
 
@@ -487,26 +475,22 @@ export async function generateDateSummary(uploadDate: Date): Promise<string> {
   const totalPatients = analyses.length;
   const abnormalPatients = analyses.filter((a) => a.abnormalCount > 0).length;
 
-  const client = getOpenAI();
-
-  const completion = await client.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [
-      {
-        role: 'system',
-        content: '검사결과 전체 요약을 2-3문장으로 작성하세요. 확정 진단 표현은 금지입니다.',
-      },
-      {
-        role: 'user',
-        content: `총 ${totalPatients}명 환자 검사결과 중 ${abnormalPatients}명에서 이상 수치 발견.\n\n` +
-          analyses.slice(0, 10).map((a) => `- ${a.patientName}: 이상 ${a.abnormalCount}건`).join('\n'),
-      },
-    ],
-    temperature: 0.3,
-    max_tokens: 300,
+  const gemini = getGemini();
+  const model = gemini.getGenerativeModel({
+    model: env.GEMINI_CHAT_MODEL || 'gemini-2.5-flash',
   });
 
-  return completion.choices[0]?.message?.content || '요약 생성 실패';
+  const result = await model.generateContent({
+    contents: [{
+      role: 'user',
+      parts: [{ text: `총 ${totalPatients}명 환자 검사결과 중 ${abnormalPatients}명에서 이상 수치 발견.\n\n` +
+        analyses.slice(0, 10).map((a) => `- ${a.patientName}: 이상 ${a.abnormalCount}건`).join('\n') }],
+    }],
+    systemInstruction: '검사결과 전체 요약을 2-3문장으로 작성하세요. 확정 진단 표현은 금지입니다.',
+    generationConfig: { temperature: 0.3, maxOutputTokens: 300 },
+  });
+
+  return result.response.text() || '요약 생성 실패';
 }
 
 /**
@@ -514,7 +498,7 @@ export async function generateDateSummary(uploadDate: Date): Promise<string> {
  */
 async function parseImageWithVision(filePath: string, fileType: string): Promise<ParsedResult[]> {
   const gemini = getGemini();
-  const model = gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const model = gemini.getGenerativeModel({ model: env.GEMINI_CHAT_MODEL || 'gemini-2.5-flash' });
 
   // 이미지 파일 읽기
   const imageBuffer = fs.readFileSync(filePath);
@@ -591,11 +575,10 @@ async function parseImageWithVision(filePath: string, fileType: string): Promise
 
 /**
  * Gemini Vision으로 PDF에서 검사결과 추출
- * PDF는 첫 페이지만 처리 (Gemini API 제한)
  */
 async function parsePdfWithVision(filePath: string): Promise<ParsedResult[]> {
   const gemini = getGemini();
-  const model = gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const model = gemini.getGenerativeModel({ model: env.GEMINI_CHAT_MODEL || 'gemini-2.5-flash' });
 
   // PDF 파일 읽기
   const pdfBuffer = fs.readFileSync(filePath);

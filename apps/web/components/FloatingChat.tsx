@@ -1,15 +1,33 @@
 'use client';
 
 import { useState, useRef, useEffect, KeyboardEvent, FormEvent } from 'react';
-import { MessageCircle, X, Send, Sparkles, Calendar, ClipboardList, BedDouble, FileText } from 'lucide-react';
+import { MessageCircle, X, Send, Sparkles, Calendar, ClipboardList, BedDouble, FileText, AlertCircle } from 'lucide-react';
 import { useAuthStore } from '../stores/auth';
 import { api } from '../lib/api';
+import ConfirmationCard from './chat/ConfirmationCard';
+import ConflictAlert from './chat/ConflictAlert';
+import DisambiguationCard from './chat/DisambiguationCard';
 
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  type?: 'message' | 'confirm' | 'conflict' | 'disambiguation' | 'permissionDenied' | 'error';
+  pendingId?: string;
+  displayData?: Record<string, any>;
+  patients?: Array<{ id: string; name: string; emrId: string | null; dob: string | null }>;
+  alternatives?: string[];
+}
+
+interface ChatApiResponse {
+  message: string;
+  sessionId: string;
+  type?: string;
+  pendingId?: string;
+  displayData?: Record<string, any>;
+  patients?: Array<{ id: string; name: string; emrId: string | null; dob: string | null }>;
+  alternatives?: string[];
 }
 
 const quickActions = [
@@ -25,6 +43,7 @@ export default function FloatingChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -46,6 +65,7 @@ export default function FloatingChat() {
       role: 'user',
       content: text.trim(),
       timestamp: new Date(),
+      type: 'message',
     };
 
     setMessages((prev) => [...prev, userMsg]);
@@ -53,17 +73,29 @@ export default function FloatingChat() {
     setIsLoading(true);
 
     try {
-      const res = await api<{ message: string }>('/api/chatbot/ask', {
+      const res = await api<ChatApiResponse>('/api/chatbot/ask', {
         method: 'POST',
-        body: { message: text.trim() },
+        body: { message: text.trim(), sessionId: sessionId || undefined },
         token: accessToken || undefined,
       });
+
+      const data = res.data!;
+
+      // 세션 유지
+      if (data.sessionId) {
+        setSessionId(data.sessionId);
+      }
 
       const assistantMsg: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: res.data?.message || '응답을 처리할 수 없습니다.',
+        content: data.message || '응답을 처리할 수 없습니다.',
         timestamp: new Date(),
+        type: (data.type as ChatMessage['type']) || 'message',
+        pendingId: data.pendingId,
+        displayData: data.displayData,
+        patients: data.patients,
+        alternatives: data.alternatives,
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
@@ -73,11 +105,82 @@ export default function FloatingChat() {
         role: 'assistant',
         content: '죄송합니다. 현재 AI 어시스턴트에 연결할 수 없습니다. 잠시 후 다시 시도해주세요.',
         timestamp: new Date(),
+        type: 'error',
       };
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
       setIsLoading(false);
     }
+  }
+
+  async function handleConfirm(pendingId: string) {
+    setIsLoading(true);
+    try {
+      const res = await api<{ message: string }>('/api/chatbot/confirm', {
+        method: 'POST',
+        body: { pendingId },
+        token: accessToken || undefined,
+      });
+
+      const confirmMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: res.data?.message || '작업이 완료되었습니다.',
+        timestamp: new Date(),
+        type: 'message',
+      };
+      setMessages((prev) => [...prev, confirmMsg]);
+    } catch {
+      const errorMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: '작업 확인 중 오류가 발생했습니다.',
+        timestamp: new Date(),
+        type: 'error',
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleReject(pendingId: string) {
+    setIsLoading(true);
+    try {
+      await api('/api/chatbot/reject', {
+        method: 'POST',
+        body: { pendingId },
+        token: accessToken || undefined,
+      });
+
+      const rejectMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: '작업이 취소되었습니다.',
+        timestamp: new Date(),
+        type: 'message',
+      };
+      setMessages((prev) => [...prev, rejectMsg]);
+    } catch {
+      // 무시
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function handleSelectAlternative(time: string) {
+    // 마지막 conflict 메시지에서 날짜 추출 후 재요청
+    const lastConflict = [...messages].reverse().find((m) => m.type === 'conflict');
+    const date = lastConflict?.displayData?.requestedDate || '';
+    const patientName = lastConflict?.displayData?.patientName || '';
+    const doctorName = lastConflict?.displayData?.doctorName || '';
+
+    sendMessage(`${patientName} 환자 ${date} ${time} ${doctorName} 예약해줘`);
+  }
+
+  function handleSelectPatient(patientId: string, patientName: string) {
+    // 원래 요청 재전송 (환자ID 포함)
+    sendMessage(`환자ID ${patientId} (${patientName}) 선택`);
   }
 
   function handleSubmit(e: FormEvent) {
@@ -89,6 +192,90 @@ export default function FloatingChat() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage(input);
+    }
+  }
+
+  function renderMessage(msg: ChatMessage) {
+    if (msg.role === 'user') {
+      return (
+        <div key={msg.id} className="flex justify-end">
+          <div className="max-w-[80%] px-3.5 py-2.5 rounded-2xl rounded-br-md bg-blue-600 text-white text-sm leading-relaxed">
+            {msg.content}
+          </div>
+        </div>
+      );
+    }
+
+    // 어시스턴트 메시지 — 타입별 렌더링
+    switch (msg.type) {
+      case 'confirm':
+        return (
+          <div key={msg.id} className="flex justify-start flex-col gap-2">
+            <div className="max-w-[85%] px-3.5 py-2.5 rounded-2xl rounded-bl-md bg-slate-100 text-slate-800 text-sm leading-relaxed">
+              {msg.content}
+            </div>
+            {msg.pendingId && msg.displayData && (
+              <ConfirmationCard
+                displayData={msg.displayData}
+                pendingId={msg.pendingId}
+                onConfirm={handleConfirm}
+                onReject={handleReject}
+                isLoading={isLoading}
+              />
+            )}
+          </div>
+        );
+
+      case 'conflict':
+        return (
+          <div key={msg.id} className="flex justify-start flex-col gap-2">
+            <ConflictAlert
+              message={msg.content}
+              alternatives={msg.alternatives || []}
+              displayData={msg.displayData}
+              onSelectAlternative={handleSelectAlternative}
+            />
+          </div>
+        );
+
+      case 'disambiguation':
+        return (
+          <div key={msg.id} className="flex justify-start flex-col gap-2">
+            <DisambiguationCard
+              message={msg.content}
+              patients={msg.patients || []}
+              onSelect={handleSelectPatient}
+            />
+          </div>
+        );
+
+      case 'permissionDenied':
+        return (
+          <div key={msg.id} className="flex justify-start">
+            <div className="max-w-[85%] px-3.5 py-2.5 rounded-2xl rounded-bl-md bg-red-50 border border-red-200 text-red-700 text-sm leading-relaxed flex items-start gap-2">
+              <AlertCircle size={16} className="shrink-0 mt-0.5" />
+              <span>{msg.content}</span>
+            </div>
+          </div>
+        );
+
+      case 'error':
+        return (
+          <div key={msg.id} className="flex justify-start">
+            <div className="max-w-[85%] px-3.5 py-2.5 rounded-2xl rounded-bl-md bg-amber-50 border border-amber-200 text-amber-700 text-sm leading-relaxed">
+              {msg.content}
+            </div>
+          </div>
+        );
+
+      default:
+        return (
+          <div key={msg.id} className="flex justify-start">
+            <div className="max-w-[80%] px-3.5 py-2.5 rounded-2xl rounded-bl-md bg-slate-100 text-slate-800 text-sm leading-relaxed">
+              {msg.content}
+            </div>
+          </div>
+        );
     }
   }
 
@@ -155,22 +342,7 @@ export default function FloatingChat() {
               </div>
             )}
 
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                <div
-                  className={`max-w-[80%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
-                    msg.role === 'user'
-                      ? 'bg-blue-600 text-white rounded-br-md'
-                      : 'bg-slate-100 text-slate-800 rounded-bl-md'
-                  }`}
-                >
-                  {msg.content}
-                </div>
-              </div>
-            ))}
+            {messages.map(renderMessage)}
 
             {isLoading && (
               <div className="flex justify-start">

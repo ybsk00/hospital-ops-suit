@@ -119,6 +119,7 @@ model User {
   labUploads            LabUpload[]            @relation("LabUploader")
   labApprovals          LabApproval[]          @relation("LabApprover")
   labAnalysisApprovals  LabAnalysis[]          @relation("LabAnalysisApprover")
+  pendingActions        PendingAction[]                            // Phase 7
 }
 
 model UserDepartment {
@@ -288,7 +289,9 @@ enum ProcedureStatus {
 model ProcedureCatalog {
   id               String   @id @default(uuid())
   name             String   @unique
+  code             String?  @unique             // Phase 7: 카탈로그 코드 (MANUAL_THERAPY 등)
   category         String
+  defaultDuration  Int?                          // Phase 7: 기본 소요시간(분)
   defaultUnitPrice Decimal  @db.Decimal(12, 2)
   requiredFields   Json?
   isActive         Boolean  @default(true)
@@ -300,17 +303,22 @@ model ProcedureCatalog {
 }
 
 model ProcedurePlan {
-  id                 String           @id @default(uuid())
+  id                 String              @id @default(uuid())
   admissionId        String
-  admission          Admission        @relation(fields: [admissionId], references: [id])
+  admission          Admission           @relation(fields: [admissionId], references: [id])
   procedureCatalogId String
-  procedureCatalog   ProcedureCatalog @relation(fields: [procedureCatalogId], references: [id])
+  procedureCatalog   ProcedureCatalog    @relation(fields: [procedureCatalogId], references: [id])
   scheduleRule       Json
   startDate          DateTime
   endDate            DateTime?
+  source             String              @default("INTERNAL")  // Phase 7: CHATBOT, EMR, INTERNAL, MIGRATION
+  frequency          ProcedureFrequency?                        // Phase 7: 반복 주기
+  frequencyNote      String?                                    // Phase 7: "주3회 월수금" 원문
+  chatSessionId      String?                                    // Phase 7: 챗봇 세션 추적
+  inputSource        String?                                    // Phase 7: TEXT | VOICE
   notes              String?
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
   deletedAt          DateTime?
 
   executions ProcedureExecution[]
@@ -353,6 +361,28 @@ enum AppointmentStatus {
 enum AppointmentSource {
   EMR
   INTERNAL
+  CHATBOT
+  MIGRATION
+}
+
+// ── Phase 7: PendingAction 상태 ──
+enum PendingActionStatus {
+  PENDING
+  CONFIRMED
+  MODIFIED
+  EXPIRED
+  CANCELLED
+}
+
+// ── Phase 7: 처치 반복 주기 ──
+enum ProcedureFrequency {
+  ONCE
+  DAILY
+  TWICE_WEEK
+  THREE_WEEK
+  EVERY_OTHER
+  WEEKLY
+  CUSTOM
 }
 
 model Doctor {
@@ -399,6 +429,8 @@ model Appointment {
   conflictFlag       Boolean           @default(false)
   conflictResolvedBy String?
   conflictResolvedAt DateTime?
+  chatSessionId      String?                                    // Phase 7: 챗봇 세션 추적
+  inputSource        String?                                    // Phase 7: TEXT | VOICE
   notes              String?
   version            Int               @default(0)
   createdAt          DateTime          @default(now())
@@ -832,7 +864,8 @@ model ChatSession {
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
-  messages ChatMessage[]
+  messages       ChatMessage[]
+  pendingActions PendingAction[]   // Phase 7
 }
 
 model ChatMessage {
@@ -843,6 +876,29 @@ model ChatMessage {
   content   String      @db.Text
   metadata  Json?
   createdAt DateTime    @default(now())
+}
+
+// ── Phase 7: 챗봇 WRITE 확인 플로우 ──
+model PendingAction {
+  id          String              @id @default(cuid())
+  sessionId   String
+  session     ChatSession         @relation(fields: [sessionId], references: [id])
+  actionType  String              // createAppointment, createProcedurePlan 등
+  payload     Json                // Function Calling 파싱 결과 전체
+  displayData Json?               // 확인 카드 표시용 가공 데이터
+  status      PendingActionStatus @default(PENDING)
+
+  createdBy   String
+  user        User                @relation(fields: [createdBy], references: [id])
+  createdAt   DateTime            @default(now())
+  expiresAt   DateTime            // 생성 후 10분
+  resolvedAt  DateTime?
+
+  resultId    String?             // 확인 후 생성된 Appointment.id 또는 ProcedurePlan.id
+  resultType  String?             // 'Appointment' | 'ProcedurePlan'
+
+  @@index([sessionId])
+  @@index([status, expiresAt])
 }
 
 // ============================================================
