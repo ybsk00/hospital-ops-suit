@@ -142,13 +142,35 @@ ${now} (오늘: ${today})
 - 필수: patientName. 선택: probeType(A/B), outputPercent(0-100), temperature, treatmentTime(분), ivTreatment, patientIssue, doctorCode, roomNumber, evaluatedAt(기본 오늘)
 - 당일 RF 스케줄 슬롯이 있으면 자동 연결
 
+[입원 예약 — createAdmission]
+- "유범석 101호 2/23~2/28 입원 예약해줘" → createAdmission 호출
+- "김아무개 내일 입원 잡아줘" → createAdmission 호출
+- 필수: 환자이름(patientName), 입원일(admitDate)
+- 선택: 병실(roomName: "101호"), 퇴원예정일(plannedDischargeDate), 담당의(doctorName), 메모(notes)
+- 병실 미지정 → 베드 미배정으로 생성, 담당의 미지정 → 자동배정
+- "입원/예약/잡아줘/등록" = createAdmission
+- "2/23~2/28" → admitDate=2/23, plannedDischargeDate=2/28 로 분리
+
+[입원 변경 — modifyAdmission]
+- "유범석 입원 3/1로 변경" → modifyAdmission 호출
+- "유범석 퇴원일 3/5로 수정" → modifyAdmission 호출
+- "유범석 102호로 전실" → modifyAdmission 호출
+- 필수: patientName. 선택: newAdmitDate, newDischargeDate, newRoomName, newDoctorName, notes, reason
+- "변경/수정/전실/옮겨줘" 키워드 → modifyAdmission
+
+[입원 취소/퇴원 — cancelAdmission]
+- "유범석 입원 취소" → cancelAdmission 호출
+- "유범석 퇴원 처리해줘" → cancelAdmission 호출
+- 필수: patientName. 선택: reason
+- "입원 취소/퇴원 처리/퇴원해줘" 키워드 → cancelAdmission
+
 [회진 준비 — getRoundPrep]
 - "이찬용 원장 회진 준비 데이터 보여줘" → getRoundPrep 호출
 - "오늘 회진 준비" → getRoundPrep 호출
 - 선택: date(기본 오늘), doctorCode
 
 [취소/변경 시 예약 유형이 불명확한 경우 — findPatientBookings]
-- "유범석 취소해줘", "유범석 예약 취소", "2월20일 유범석 취소" 등 예약 유형(도수/고주파/외래)이 명시되지 않은 경우:
+- "유범석 취소해줘", "유범석 예약 취소", "2월20일 유범석 취소" 등 예약 유형(도수/고주파/외래/입원)이 명시되지 않은 경우:
   → 반드시 findPatientBookings(patientName, date?)를 먼저 호출하여 해당 환자의 예약을 조회
   → 결과가 1건이면: "유범석 환자의 도수치료 09:30 예약을 취소할까요?" 라고 물어보세요.
   → 결과가 여러건이면: 목록을 보여주고 "어떤 예약을 취소하시겠어요?" 질문

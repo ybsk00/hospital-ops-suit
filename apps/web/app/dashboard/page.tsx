@@ -416,7 +416,7 @@ export default function DashboardPage() {
             <MonthlyCalendarHeatmap
               data={trendData}
               field="appointments"
-              title="외래 예약"
+              title="치료예약"
               color="orange"
             />
             <MonthlyCalendarHeatmap
@@ -450,7 +450,7 @@ export default function DashboardPage() {
             <WeeklyCalendarHeatmap
               data={trendData}
               field="appointments"
-              title="외래 예약"
+              title="치료예약"
               color="orange"
             />
             <WeeklyCalendarHeatmap
@@ -495,16 +495,16 @@ export default function DashboardPage() {
               </ResponsiveContainer>
             </div>
 
-            {/* 외래 예약 */}
+            {/* 치료예약 */}
             <div>
-              <h3 className="text-sm font-medium text-slate-700 mb-2">외래 예약</h3>
+              <h3 className="text-sm font-medium text-slate-700 mb-2">치료예약</h3>
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#94a3b8" />
                   <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" />
                   <Tooltip />
-                  <Line type="monotone" dataKey="appointments" stroke="#f59e0b" name="외래 예약" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="appointments" stroke="#f59e0b" name="치료예약" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>

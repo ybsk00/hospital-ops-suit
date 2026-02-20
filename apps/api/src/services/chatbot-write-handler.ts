@@ -43,6 +43,10 @@ const FUNCTION_PERMISSION_MAP: Record<string, { resource: PermissionResource; ac
   cancelHandoverEntry: { resource: 'SCHEDULING', action: 'WRITE' },
   updateClinicalInfo: { resource: 'SCHEDULING', action: 'WRITE' },
   createRfEvaluation: { resource: 'SCHEDULING', action: 'WRITE' },
+  // Phase 8F: 입원예약
+  createAdmission: { resource: 'ADMISSIONS', action: 'WRITE' },
+  modifyAdmission: { resource: 'ADMISSIONS', action: 'WRITE' },
+  cancelAdmission: { resource: 'ADMISSIONS', action: 'WRITE' },
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -143,6 +147,13 @@ export async function handleWriteFunction(
       return handleUpdateClinicalInfo(args, user, sessionId);
     case 'createRfEvaluation':
       return handleCreateRfEvaluation(args, user, sessionId);
+    // Phase 8F: 입원예약
+    case 'createAdmission':
+      return handleCreateAdmission(args, user, sessionId);
+    case 'modifyAdmission':
+      return handleModifyAdmission(args, user, sessionId);
+    case 'cancelAdmission':
+      return handleCancelAdmission(args, user, sessionId);
     default:
       return { type: 'error', message: `처리할 수 없는 함수: ${functionName}` };
   }
@@ -1218,6 +1229,137 @@ export async function confirmPendingAction(
           type: 'rfEvaluation',
           id: evaluation.id,
           patientId: payload.patientId,
+        });
+        break;
+      }
+
+      // Phase 8F: 입원예약
+      case 'createAdmission': {
+        const admResult = await prisma.$transaction(async (tx) => {
+          const newAdmission = await tx.admission.create({
+            data: {
+              patientId: payload.patientId,
+              admitDate: new Date(payload.admitDate),
+              plannedDischargeDate: payload.plannedDischargeDate ? new Date(payload.plannedDischargeDate) : null,
+              attendingDoctorId: payload.doctorId,
+              currentBedId: payload.bedId || null,
+              status: new Date(payload.admitDate) > new Date() ? 'DISCHARGE_PLANNED' : 'ADMITTED',
+              notes: payload.notes || null,
+            },
+          });
+
+          if (payload.bedId) {
+            const isReservation = new Date(payload.admitDate) > new Date();
+            await tx.bed.update({
+              where: { id: payload.bedId },
+              data: { status: isReservation ? 'RESERVED' : 'OCCUPIED', version: { increment: 1 } },
+            });
+            await tx.bedAssignment.create({
+              data: {
+                admissionId: newAdmission.id,
+                bedId: payload.bedId,
+                startAt: new Date(payload.admitDate),
+                changedBy: pending.createdBy,
+              },
+            });
+          }
+
+          return newAdmission;
+        });
+
+        resultId = admResult.id;
+        resultType = 'Admission';
+
+        notifyDepartments('booking:created', {
+          type: 'admission',
+          id: admResult.id,
+          patientId: payload.patientId,
+          admitDate: payload.admitDate,
+          roomName: payload.roomName,
+        });
+        break;
+      }
+
+      case 'modifyAdmission': {
+        const admUpdateData: any = { version: { increment: 1 } };
+        if (payload.newAdmitDate) admUpdateData.admitDate = new Date(payload.newAdmitDate);
+        if (payload.newDischargeDate) admUpdateData.plannedDischargeDate = new Date(payload.newDischargeDate);
+        if (payload.newDoctorId) admUpdateData.attendingDoctorId = payload.newDoctorId;
+        if (payload.notes) admUpdateData.notes = payload.notes;
+
+        if (payload.newBedId && payload.newBedId !== payload.originalBedId) {
+          await prisma.$transaction(async (tx) => {
+            // 기존 베드 해제
+            if (payload.originalBedId) {
+              await tx.bed.update({
+                where: { id: payload.originalBedId },
+                data: { status: 'EMPTY', version: { increment: 1 } },
+              });
+            }
+            // 새 베드 배정
+            await tx.bed.update({
+              where: { id: payload.newBedId },
+              data: { status: 'OCCUPIED', version: { increment: 1 } },
+            });
+            admUpdateData.currentBedId = payload.newBedId;
+            await tx.admission.update({
+              where: { id: payload.admissionId },
+              data: admUpdateData,
+            });
+            await tx.bedAssignment.create({
+              data: {
+                admissionId: payload.admissionId,
+                bedId: payload.newBedId,
+                startAt: new Date(),
+                changedBy: pending.createdBy,
+              },
+            });
+          });
+        } else {
+          await prisma.admission.update({
+            where: { id: payload.admissionId },
+            data: admUpdateData,
+          });
+        }
+
+        resultId = payload.admissionId;
+        resultType = 'Admission';
+
+        notifyDepartments('booking:modified', {
+          type: 'admission',
+          id: payload.admissionId,
+          reason: payload.reason,
+        });
+        break;
+      }
+
+      case 'cancelAdmission': {
+        await prisma.$transaction(async (tx) => {
+          const adm = await tx.admission.update({
+            where: { id: payload.admissionId },
+            data: {
+              status: 'DISCHARGED',
+              dischargeDate: new Date(),
+              version: { increment: 1 },
+            },
+          });
+
+          // 베드 해제
+          if (adm.currentBedId) {
+            await tx.bed.update({
+              where: { id: adm.currentBedId },
+              data: { status: 'EMPTY', version: { increment: 1 } },
+            });
+          }
+        });
+
+        resultId = payload.admissionId;
+        resultType = 'Admission';
+
+        notifyDepartments('booking:cancelled', {
+          type: 'admission',
+          id: payload.admissionId,
+          reason: payload.reason,
         });
         break;
       }
@@ -2431,6 +2573,387 @@ async function handleCreateRfEvaluation(
   return {
     type: 'confirm',
     message: `${patient.name} 환자의 고주파 치료 평가를 기록합니다${details.length ? ` (${details.join(', ')})` : ''}. 확인해 주세요.`,
+    pendingId: pending.id,
+    displayData,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  입원예약 생성 (Phase 8F)
+// ═══════════════════════════════════════════════════════════
+
+async function handleCreateAdmission(
+  args: Record<string, any>,
+  user: any,
+  sessionId: string,
+): Promise<WriteHandlerResult> {
+  // 환자 매칭
+  const patientResolve = await resolvePatient(args);
+  if (patientResolve.status === 'sameNameCheck' || patientResolve.status === 'disambiguation') {
+    return patientResolve.result;
+  }
+
+  const { patientId, patientName, patientEmrId } = patientResolve;
+
+  // 이미 재원 중인지 확인
+  const existingAdmission = await prisma.admission.findFirst({
+    where: {
+      patientId,
+      status: { in: ['ADMITTED', 'DISCHARGE_PLANNED', 'ON_LEAVE'] },
+      deletedAt: null,
+    },
+    include: { currentBed: { include: { room: true } } },
+  });
+  if (existingAdmission) {
+    const roomInfo = existingAdmission.currentBed
+      ? `${existingAdmission.currentBed.room.name} ${existingAdmission.currentBed.label}`
+      : '미배정';
+    return { type: 'error', message: `${patientName} 환자는 현재 재원 중입니다 (${roomInfo}).` };
+  }
+
+  // 병실 + 빈 베드 찾기
+  let bedId: string | null = null;
+  let bedLabel = '';
+  let roomDisplay = '';
+
+  if (args.roomName) {
+    // "101호" → "101" 숫자 추출
+    const roomNum = args.roomName.replace(/[^0-9]/g, '');
+    const room = await prisma.room.findFirst({
+      where: {
+        OR: [
+          { name: args.roomName },
+          { name: roomNum },
+          { name: { contains: roomNum } },
+        ],
+        deletedAt: null,
+      },
+      include: {
+        beds: {
+          where: { status: 'EMPTY', isActive: true, deletedAt: null },
+          orderBy: { label: 'asc' },
+          take: 1,
+        },
+      },
+    });
+
+    if (!room) {
+      return { type: 'error', message: `"${args.roomName}" 병실을 찾을 수 없습니다.` };
+    }
+
+    if (room.beds.length === 0) {
+      return { type: 'error', message: `${room.name} 병실에 빈 베드가 없습니다.` };
+    }
+
+    bedId = room.beds[0].id;
+    bedLabel = room.beds[0].label;
+    roomDisplay = room.name;
+  }
+
+  // 담당의 결정
+  let doctorId: string | null = null;
+  let doctorName = '';
+
+  if (args.doctorName) {
+    const doc = await prisma.user.findFirst({
+      where: {
+        name: { contains: args.doctorName },
+        isActive: true,
+        deletedAt: null,
+        departments: { some: { role: 'DOCTOR' } },
+      },
+    });
+    if (doc) {
+      doctorId = doc.id;
+      doctorName = doc.name;
+    } else {
+      return { type: 'error', message: `"${args.doctorName}" 담당의를 찾을 수 없습니다.` };
+    }
+  } else {
+    // 자동배정: 첫 번째 의사
+    const doc = await prisma.user.findFirst({
+      where: {
+        isActive: true,
+        deletedAt: null,
+        departments: { some: { role: 'DOCTOR' } },
+      },
+      orderBy: { name: 'asc' },
+    });
+    if (doc) {
+      doctorId = doc.id;
+      doctorName = doc.name;
+    }
+  }
+
+  if (!doctorId) {
+    return { type: 'error', message: '담당의를 찾을 수 없습니다.' };
+  }
+
+  const displayData: Record<string, any> = {
+    actionLabel: '입원 예약',
+    patientName,
+    patientEmrId,
+    roomName: roomDisplay || '미배정',
+    bedLabel: bedLabel || '미배정',
+    doctorName,
+    admitDate: args.admitDate,
+    plannedDischargeDate: args.plannedDischargeDate || null,
+    notes: args.notes || null,
+  };
+
+  const pending = await prisma.pendingAction.create({
+    data: {
+      sessionId,
+      actionType: 'createAdmission',
+      payload: {
+        patientId,
+        patientName,
+        bedId,
+        doctorId,
+        admitDate: args.admitDate,
+        plannedDischargeDate: args.plannedDischargeDate || null,
+        roomName: roomDisplay,
+        notes: args.notes || null,
+      },
+      displayData,
+      status: 'PENDING',
+      createdBy: user.id,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    },
+  });
+
+  const dateRange = args.plannedDischargeDate
+    ? `${args.admitDate}~${args.plannedDischargeDate}`
+    : args.admitDate;
+  const roomMsg = roomDisplay ? ` ${roomDisplay} ${bedLabel}` : '';
+
+  return {
+    type: 'confirm',
+    message: `${patientName} 환자를 ${dateRange}에${roomMsg} 입원 예약합니다 (담당의: ${doctorName}). 확인해 주세요.`,
+    pendingId: pending.id,
+    displayData,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  입원예약 변경 (Phase 8F)
+// ═══════════════════════════════════════════════════════════
+
+async function handleModifyAdmission(
+  args: Record<string, any>,
+  user: any,
+  sessionId: string,
+): Promise<WriteHandlerResult> {
+  const patientResult = await matchPatient(args.patientName);
+  if (patientResult.status === 'notFound') {
+    return { type: 'error', message: `"${args.patientName}" 환자를 찾을 수 없습니다.` };
+  }
+  if (patientResult.status === 'multiple') {
+    return {
+      type: 'disambiguation',
+      message: `"${args.patientName}" 이름의 환자가 여러 명입니다. 선택해 주세요.`,
+      patients: patientResult.patients.map((p) => ({ id: p.id, name: p.name, emrId: p.emrPatientId, dob: p.dob })),
+    };
+  }
+  const patient = patientResult.patient;
+
+  // 현재 활성 입원 찾기
+  const admission = await prisma.admission.findFirst({
+    where: {
+      patientId: patient.id,
+      status: { in: ['ADMITTED', 'DISCHARGE_PLANNED', 'ON_LEAVE'] },
+      deletedAt: null,
+    },
+    include: {
+      currentBed: { include: { room: true } },
+      attendingDoctor: { select: { id: true, name: true } },
+    },
+  });
+
+  if (!admission) {
+    return { type: 'error', message: `${patient.name} 환자의 활성 입원 기록을 찾을 수 없습니다.` };
+  }
+
+  // 새 병실 결정
+  let newBedId: string | null = null;
+  let newBedLabel = '';
+  let newRoomName = '';
+
+  if (args.newRoomName) {
+    const roomNum = args.newRoomName.replace(/[^0-9]/g, '');
+    const room = await prisma.room.findFirst({
+      where: {
+        OR: [
+          { name: args.newRoomName },
+          { name: roomNum },
+          { name: { contains: roomNum } },
+        ],
+        deletedAt: null,
+      },
+      include: {
+        beds: {
+          where: { status: 'EMPTY', isActive: true, deletedAt: null },
+          orderBy: { label: 'asc' },
+          take: 1,
+        },
+      },
+    });
+
+    if (!room) {
+      return { type: 'error', message: `"${args.newRoomName}" 병실을 찾을 수 없습니다.` };
+    }
+    if (room.beds.length === 0) {
+      return { type: 'error', message: `${room.name} 병실에 빈 베드가 없습니다.` };
+    }
+    newBedId = room.beds[0].id;
+    newBedLabel = room.beds[0].label;
+    newRoomName = room.name;
+  }
+
+  // 새 담당의 결정
+  let newDoctorId: string | null = null;
+  let newDoctorName = '';
+
+  if (args.newDoctorName) {
+    const doc = await prisma.user.findFirst({
+      where: {
+        name: { contains: args.newDoctorName },
+        isActive: true,
+        deletedAt: null,
+        departments: { some: { role: 'DOCTOR' } },
+      },
+    });
+    if (!doc) {
+      return { type: 'error', message: `"${args.newDoctorName}" 담당의를 찾을 수 없습니다.` };
+    }
+    newDoctorId = doc.id;
+    newDoctorName = doc.name;
+  }
+
+  const currentRoom = admission.currentBed
+    ? `${admission.currentBed.room.name} ${admission.currentBed.label}`
+    : '미배정';
+
+  const displayData: Record<string, any> = {
+    actionLabel: '입원 정보 변경',
+    patientName: patient.name,
+    currentRoom,
+    currentDoctor: admission.attendingDoctor?.name || '미배정',
+    currentAdmitDate: admission.admitDate.toISOString().slice(0, 10),
+    currentDischargeDate: admission.plannedDischargeDate?.toISOString().slice(0, 10) || null,
+  };
+
+  if (args.newAdmitDate) displayData.newAdmitDate = args.newAdmitDate;
+  if (args.newDischargeDate) displayData.newDischargeDate = args.newDischargeDate;
+  if (newRoomName) displayData.newRoom = `${newRoomName} ${newBedLabel}`;
+  if (newDoctorName) displayData.newDoctor = newDoctorName;
+  if (args.reason) displayData.reason = args.reason;
+
+  const pending = await prisma.pendingAction.create({
+    data: {
+      sessionId,
+      actionType: 'modifyAdmission',
+      payload: {
+        admissionId: admission.id,
+        originalBedId: admission.currentBedId,
+        newAdmitDate: args.newAdmitDate || null,
+        newDischargeDate: args.newDischargeDate || null,
+        newBedId,
+        newDoctorId,
+        notes: args.notes || null,
+        reason: args.reason || null,
+      },
+      displayData,
+      status: 'PENDING',
+      createdBy: user.id,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    },
+  });
+
+  const changes: string[] = [];
+  if (args.newAdmitDate) changes.push(`입원일 → ${args.newAdmitDate}`);
+  if (args.newDischargeDate) changes.push(`퇴원예정 → ${args.newDischargeDate}`);
+  if (newRoomName) changes.push(`병실 → ${newRoomName} ${newBedLabel}`);
+  if (newDoctorName) changes.push(`담당의 → ${newDoctorName}`);
+
+  return {
+    type: 'confirm',
+    message: `${patient.name} 환자의 입원 정보를 변경합니다 (${changes.join(', ')}). 확인해 주세요.`,
+    pendingId: pending.id,
+    displayData,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  입원예약 취소/퇴원 (Phase 8F)
+// ═══════════════════════════════════════════════════════════
+
+async function handleCancelAdmission(
+  args: Record<string, any>,
+  user: any,
+  sessionId: string,
+): Promise<WriteHandlerResult> {
+  const patientResult = await matchPatient(args.patientName);
+  if (patientResult.status === 'notFound') {
+    return { type: 'error', message: `"${args.patientName}" 환자를 찾을 수 없습니다.` };
+  }
+  if (patientResult.status === 'multiple') {
+    return {
+      type: 'disambiguation',
+      message: `"${args.patientName}" 이름의 환자가 여러 명입니다. 선택해 주세요.`,
+      patients: patientResult.patients.map((p) => ({ id: p.id, name: p.name, emrId: p.emrPatientId, dob: p.dob })),
+    };
+  }
+  const patient = patientResult.patient;
+
+  // 활성 입원 찾기
+  const admission = await prisma.admission.findFirst({
+    where: {
+      patientId: patient.id,
+      status: { in: ['ADMITTED', 'DISCHARGE_PLANNED', 'ON_LEAVE'] },
+      deletedAt: null,
+    },
+    include: {
+      currentBed: { include: { room: true } },
+      attendingDoctor: { select: { name: true } },
+    },
+  });
+
+  if (!admission) {
+    return { type: 'error', message: `${patient.name} 환자의 활성 입원 기록을 찾을 수 없습니다.` };
+  }
+
+  const roomInfo = admission.currentBed
+    ? `${admission.currentBed.room.name} ${admission.currentBed.label}`
+    : '미배정';
+
+  const displayData = {
+    actionLabel: '입원 취소 / 퇴원',
+    patientName: patient.name,
+    room: roomInfo,
+    doctor: admission.attendingDoctor?.name || '미배정',
+    admitDate: admission.admitDate.toISOString().slice(0, 10),
+    reason: args.reason || null,
+  };
+
+  const pending = await prisma.pendingAction.create({
+    data: {
+      sessionId,
+      actionType: 'cancelAdmission',
+      payload: {
+        admissionId: admission.id,
+        reason: args.reason || null,
+      },
+      displayData,
+      status: 'PENDING',
+      createdBy: user.id,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    },
+  });
+
+  return {
+    type: 'confirm',
+    message: `${patient.name} 환자 (${roomInfo})를 퇴원 처리합니다. 확인해 주세요.`,
     pendingId: pending.id,
     displayData,
   };

@@ -1777,7 +1777,59 @@ const PHASE8E_WRITE_FUNCTIONS = [
   },
 ];
 
-// ── 전체 합치기 (45개) ──
+// ── Phase 8F: 입원예약 WRITE 함수 (3개) ──
+const ADMISSION_WRITE_FUNCTIONS = [
+  {
+    name: 'createAdmission',
+    description: '입원 예약을 생성합니다. "유범석 101호 2/23~2/28 입원 예약해줘", "김아무개 내일 입원 잡아줘" 등의 요청에 사용.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름 (필수)' },
+        roomName: { type: S.STRING, description: '병실 이름 (예: "101호", "201호")' },
+        admitDate: { type: S.STRING, description: '입원일 (YYYY-MM-DD)' },
+        plannedDischargeDate: { type: S.STRING, description: '예정 퇴원일 (YYYY-MM-DD)' },
+        doctorName: { type: S.STRING, description: '담당의 이름 (미지정 시 자동배정)' },
+        notes: { type: S.STRING, description: '비고/메모' },
+        dob: { type: S.STRING, description: '생년월일 (YYYY-MM-DD, 동명이인 구분용)' },
+        useExistingPatient: { type: S.BOOLEAN, description: '기존 동명 환자 사용 여부' },
+      },
+      required: ['patientName', 'admitDate'],
+    },
+  },
+  {
+    name: 'modifyAdmission',
+    description: '기존 입원 예약을 변경합니다. "유범석 입원 3/1로 변경", "유범석 퇴원일 3/5로 수정" 등의 요청에 사용.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름 (필수)' },
+        newAdmitDate: { type: S.STRING, description: '변경할 입원일 (YYYY-MM-DD)' },
+        newDischargeDate: { type: S.STRING, description: '변경할 퇴원예정일 (YYYY-MM-DD)' },
+        newRoomName: { type: S.STRING, description: '변경할 병실 이름 (예: "102호")' },
+        newDoctorName: { type: S.STRING, description: '변경할 담당의 이름' },
+        notes: { type: S.STRING, description: '변경 메모' },
+        reason: { type: S.STRING, description: '변경 사유' },
+      },
+      required: ['patientName'],
+    },
+  },
+  {
+    name: 'cancelAdmission',
+    description: '입원 예약을 취소(퇴원 처리)합니다. "유범석 입원 취소", "유범석 퇴원 처리해줘" 등의 요청에 사용.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름 (필수)' },
+        date: { type: S.STRING, description: '입원일 (특정 입원 지정, YYYY-MM-DD)' },
+        reason: { type: S.STRING, description: '취소/퇴원 사유' },
+      },
+      required: ['patientName'],
+    },
+  },
+];
+
+// ── 전체 합치기 (48개) ──
 export const ALL_FUNCTION_DECLARATIONS = [
   ...READ_FUNCTIONS,
   ...NEW_READ_FUNCTIONS,
@@ -1786,6 +1838,7 @@ export const ALL_FUNCTION_DECLARATIONS = [
   ...WRITE_FUNCTIONS,
   ...SCHEDULING_WRITE_FUNCTIONS,
   ...PHASE8E_WRITE_FUNCTIONS,
+  ...ADMISSION_WRITE_FUNCTIONS,
 ];
 
 // ── WRITE 함수명 Set (분기 판별용) ──
@@ -1797,6 +1850,8 @@ export const WRITE_FUNCTION_NAMES = new Set([
   // Phase 8E
   'createHandoverEntry', 'modifyHandoverEntry', 'cancelHandoverEntry',
   'updateClinicalInfo', 'createRfEvaluation',
+  // Phase 8F: 입원예약
+  'createAdmission', 'modifyAdmission', 'cancelAdmission',
 ]);
 
 // ═══════════════════════════════════════════════════════════
