@@ -601,7 +601,7 @@ export default function RfSchedulePage() {
     for (let i = 0; i < 6; i++) {
       const dd = new Date(s);
       dd.setDate(s.getDate() + i);
-      dates.push(dtoDateStr(d));
+      dates.push(toDateStr(dd));
     }
     return dates;
   };
