@@ -23,43 +23,43 @@ router.get(
     const nextDate = new Date(targetDate);
     nextDate.setDate(nextDate.getDate() + 1);
 
-    // 재원 중 (해당 날짜 기준)
-    const currentCount = await prisma.admission.count({
-      where: {
-        status: { in: ['ADMITTED', 'DISCHARGE_PLANNED', 'ON_LEAVE'] },
-        admitDate: { lte: nextDate },
-        OR: [{ dischargeDate: null }, { dischargeDate: { gte: targetDate } }],
-        deletedAt: null,
-      },
-    });
-
-    // 오늘 입원
-    const admitCount = await prisma.admission.count({
-      where: {
-        admitDate: { gte: targetDate, lt: nextDate },
-        deletedAt: null,
-      },
-    });
-
-    // 오늘 퇴원
-    const dischargeCount = await prisma.admission.count({
-      where: {
-        dischargeDate: { gte: targetDate, lt: nextDate },
-        deletedAt: null,
-      },
-    });
-
-    // 재입원 예정 (퇴원 후 입원 예정이 있는 환자 — 미래 입원 예정)
-    const readmitCount = await prisma.admission.count({
-      where: {
-        admitDate: { gt: targetDate },
-        status: 'ADMITTED',
-        patient: {
-          admissions: { some: { dischargeDate: { not: null }, deletedAt: null } },
+    // 4개 카운트 병렬 쿼리
+    const [currentCount, admitCount, dischargeCount, readmitCount] = await Promise.all([
+      // 재원 중 (해당 날짜 기준)
+      prisma.admission.count({
+        where: {
+          status: { in: ['ADMITTED', 'DISCHARGE_PLANNED', 'ON_LEAVE'] },
+          admitDate: { lte: nextDate },
+          OR: [{ dischargeDate: null }, { dischargeDate: { gte: targetDate } }],
+          deletedAt: null,
         },
-        deletedAt: null,
-      },
-    });
+      }),
+      // 오늘 입원
+      prisma.admission.count({
+        where: {
+          admitDate: { gte: targetDate, lt: nextDate },
+          deletedAt: null,
+        },
+      }),
+      // 오늘 퇴원
+      prisma.admission.count({
+        where: {
+          dischargeDate: { gte: targetDate, lt: nextDate },
+          deletedAt: null,
+        },
+      }),
+      // 재입원 예정
+      prisma.admission.count({
+        where: {
+          admitDate: { gt: targetDate },
+          status: 'ADMITTED',
+          patient: {
+            admissions: { some: { dischargeDate: { not: null }, deletedAt: null } },
+          },
+          deletedAt: null,
+        },
+      }),
+    ]);
 
     res.json({
       success: true,

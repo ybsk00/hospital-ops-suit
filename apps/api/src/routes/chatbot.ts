@@ -185,10 +185,19 @@ ${now} (오늘: ${today})
 ⑤ "예약해줘/잡아줘" = create, "변경해줘/수정해줘/바꿔줘" = modify, "취소해줘/빼줘" = cancel
 
 [동명이인 처리 — 시스템이 "동명이인인가요?" 질문을 반환한 후]
-- 사용자가 "같은 사람", "네 맞아요", "동일인" → useExistingPatient=true로 다시 Function 호출
+- 사용자가 "같은 사람", "네 맞아요", "동일인", "맞아", "선택" → **이전 대화에서 환자이름·날짜·시간을 추출하여** useExistingPatient=true를 포함한 동일 Function을 다시 호출하세요!
 - 사용자가 "동명이인", "다른 사람" + 생년월일 → dob="YYYY-MM-DD"로 다시 Function 호출
 - 사용자가 생년월일만 말함 (예: "1990년 3월 15일", "90년생") → dob="1990-03-15"로 다시 Function 호출
 - 생년월일 형식 변환: "90년 3월 15일" → "1990-03-15", "65년생" → "1965-01-01"
+★ 중요: 동명이인 확인 후 반드시 이전 메시지에서 patientName, date, time 등 원래 파라미터를 모두 포함하여 다시 호출하세요. 빈 응답을 생성하지 마세요!
+
+[필수 정보 반문 규칙]
+- Function 호출에 필요한 필수 파라미터가 부족하면, 빈 응답 대신 **부족한 정보를 반문**하세요.
+- 예: 날짜 없음 → "몇 월 며칠에 예약하시겠어요?"
+- 예: 시간 없음 → "몇 시에 예약하시겠어요? (09:00~17:30)"
+- 예: 환자이름 없음 → "환자 성함을 알려주세요."
+- 예: 예약 유형 불명 → "도수치료, 고주파, 외래 중 어떤 예약인가요?"
+- 절대 빈 응답(텍스트 없음)을 반환하지 마세요!
 
 [WRITE 작업 규칙]
 - 예약/처치 생성·변경·취소 요청 시 즉시 해당 WRITE Function을 호출하세요.
@@ -336,8 +345,10 @@ router.post(
             responseData.patients = writeResult.patients;
           }
         } catch (err) {
-          console.error('[Chatbot] WRITE 함수 실행 오류:', err);
-          responseData.message = '예약 처리 중 오류가 발생했습니다. 다시 시도해 주세요.';
+          const errMsg = (err as Error).message || '알 수 없는 오류';
+          console.error('[Chatbot] WRITE 함수 실행 오류:', errMsg);
+          responseData.type = 'error';
+          responseData.message = `예약 처리 중 오류가 발생했습니다: ${errMsg}. 다시 시도해 주세요.`;
         }
       } else {
         // ── READ Function → DB 조회 후 Gemini에 결과 반환 ──
@@ -352,11 +363,23 @@ router.post(
           },
         ]);
 
-        responseData.message = result2.response.text() || '응답을 생성할 수 없습니다.';
+        const readReply = result2.response.text();
+        if (readReply) {
+          responseData.message = readReply;
+        } else {
+          // Gemini가 빈 응답 → 안내 메시지
+          responseData.message = '조회 결과를 정리하는 중 문제가 발생했습니다. 질문을 좀 더 구체적으로 다시 말씀해 주세요. (예: "유범석 2/24 10시 도수 예약해줘")';
+        }
       }
     } else {
       // Function 호출 없이 직접 답변
-      responseData.message = response.text() || '응답을 생성할 수 없습니다.';
+      const directReply = response.text();
+      if (directReply) {
+        responseData.message = directReply;
+      } else {
+        // Gemini가 빈 응답 → 필수 정보 반문
+        responseData.message = '죄송합니다. 요청을 이해하지 못했습니다. 필요한 정보를 포함해서 다시 말씀해 주세요.\n\n예시:\n• 예약: "유범석 2/24 10시 도수 예약해줘"\n• 조회: "오늘 예약 현황 알려줘"\n• 변경: "유범석 도수 14시로 변경해줘"';
+      }
     }
 
     // 어시스턴트 메시지 저장

@@ -178,9 +178,9 @@ export default function FloatingChat() {
     sendMessage(`${patientName} 환자 ${date} ${time} ${doctorName} 예약해줘`);
   }
 
-  function handleSelectPatient(patientId: string, patientName: string) {
-    // 원래 요청 재전송 (환자ID 포함)
-    sendMessage(`환자ID ${patientId} (${patientName}) 선택`);
+  function handleSelectPatient(_patientId: string, patientName: string) {
+    // 동일인 확인 → Gemini가 useExistingPatient=true로 원래 Function 재호출
+    sendMessage(`${patientName} 동일인입니다. 이전 요청 계속 진행해주세요.`);
   }
 
   function handleSubmit(e: FormEvent) {

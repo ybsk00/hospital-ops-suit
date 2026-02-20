@@ -1508,15 +1508,21 @@ async function resolvePatient(args: Record<string, any>): Promise<PatientResolve
       }
     }
 
-    // dob도 useExisting도 없음 → 동명이인 질문
+    // dob도 useExisting도 없음 → 동명이인 확인 카드
     const dobStr = existing.dob
       ? `${existing.dob.getFullYear()}년 ${existing.dob.getMonth() + 1}월 ${existing.dob.getDate()}일생`
       : '생년월일 미등록';
     return {
       status: 'sameNameCheck',
       result: {
-        type: 'error',
-        message: `"${existing.name}" 환자가 이미 등록되어 있습니다(${dobStr}). 같은 분이면 "같은 사람"이라고 해주세요. 동명이인이라면 생년월일을 알려주세요. (예: 1990-03-15)`,
+        type: 'disambiguation',
+        message: `"${existing.name}" 환자가 이미 등록되어 있습니다(${dobStr}). 같은 분이면 선택해주세요. 동명이인이라면 생년월일을 알려주세요.`,
+        patients: [{
+          id: existing.id,
+          name: existing.name,
+          emrId: existing.emrPatientId,
+          dob: existing.dob,
+        }],
       },
     };
   }

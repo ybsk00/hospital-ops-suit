@@ -44,75 +44,74 @@ router.get(
     const nextDate = new Date(targetDate);
     nextDate.setDate(nextDate.getDate() + 1);
 
-    // 병실/베드 + 현재 입원 환자
-    const rooms = await prisma.room.findMany({
-      where: { isActive: true, deletedAt: null },
-      include: {
-        ward: true,
-        beds: {
-          where: { isActive: true, deletedAt: null },
-          include: {
-            currentAdmission: {
-              include: {
-                patient: { select: { id: true, name: true, dob: true, sex: true, emrPatientId: true } },
-                attendingDoctor: { select: { name: true } },
+    // 5개 독립 쿼리 병렬 실행
+    const [rooms, manualSlots, rfSlots, procedures, appointments] = await Promise.all([
+      // 병실/베드 + 현재 입원 환자
+      prisma.room.findMany({
+        where: { isActive: true, deletedAt: null },
+        include: {
+          ward: true,
+          beds: {
+            where: { isActive: true, deletedAt: null },
+            include: {
+              currentAdmission: {
+                include: {
+                  patient: { select: { id: true, name: true, dob: true, sex: true, emrPatientId: true } },
+                  attendingDoctor: { select: { name: true } },
+                },
               },
             },
           },
         },
-      },
-      orderBy: { name: 'asc' },
-    });
-
-    // 도수치료 스케줄
-    const manualSlots = await prisma.manualTherapySlot.findMany({
-      where: { date: targetDate, status: { not: 'CANCELLED' }, deletedAt: null },
-      include: {
-        patient: { select: { id: true, name: true } },
-        therapist: { select: { name: true } },
-      },
-    });
-
-    // 고주파 스케줄
-    const rfSlots = await prisma.rfScheduleSlot.findMany({
-      where: { date: targetDate, status: { not: 'CANCELLED' }, deletedAt: null },
-      include: {
-        patient: { select: { id: true, name: true } },
-        room: { select: { name: true } },
-      },
-    });
-
-    // 처치 스케줄
-    const procedures = await prisma.procedureExecution.findMany({
-      where: {
-        scheduledAt: { gte: targetDate, lt: nextDate },
-        status: { in: ['SCHEDULED', 'IN_PROGRESS'] },
-        deletedAt: null,
-      },
-      include: {
-        plan: {
-          include: {
-            procedureCatalog: { select: { name: true, code: true } },
-            admission: {
-              include: { patient: { select: { id: true, name: true } } },
+        orderBy: { name: 'asc' },
+      }),
+      // 도수치료 스케줄
+      prisma.manualTherapySlot.findMany({
+        where: { date: targetDate, status: { not: 'CANCELLED' }, deletedAt: null },
+        include: {
+          patient: { select: { id: true, name: true } },
+          therapist: { select: { name: true } },
+        },
+      }),
+      // 고주파 스케줄
+      prisma.rfScheduleSlot.findMany({
+        where: { date: targetDate, status: { not: 'CANCELLED' }, deletedAt: null },
+        include: {
+          patient: { select: { id: true, name: true } },
+          room: { select: { name: true } },
+        },
+      }),
+      // 처치 스케줄
+      prisma.procedureExecution.findMany({
+        where: {
+          scheduledAt: { gte: targetDate, lt: nextDate },
+          status: { in: ['SCHEDULED', 'IN_PROGRESS'] },
+          deletedAt: null,
+        },
+        include: {
+          plan: {
+            include: {
+              procedureCatalog: { select: { name: true, code: true } },
+              admission: {
+                include: { patient: { select: { id: true, name: true } } },
+              },
             },
           },
         },
-      },
-    });
-
-    // 외래예약
-    const appointments = await prisma.appointment.findMany({
-      where: {
-        startAt: { gte: targetDate, lt: nextDate },
-        status: { in: ['BOOKED', 'CHECKED_IN'] },
-        deletedAt: null,
-      },
-      include: {
-        patient: { select: { id: true, name: true } },
-        doctor: { select: { name: true } },
-      },
-    });
+      }),
+      // 외래예약
+      prisma.appointment.findMany({
+        where: {
+          startAt: { gte: targetDate, lt: nextDate },
+          status: { in: ['BOOKED', 'CHECKED_IN'] },
+          deletedAt: null,
+        },
+        include: {
+          patient: { select: { id: true, name: true } },
+          doctor: { select: { name: true } },
+        },
+      }),
+    ]);
 
     // 환자ID → 치료 스케줄 매핑
     const patientSchedules: Record<string, any[]> = {};

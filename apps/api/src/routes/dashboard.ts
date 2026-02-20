@@ -139,8 +139,8 @@ router.get(
     if (req.query.from) fromDate = new Date(req.query.from as string);
     if (req.query.to) toDate.setTime(new Date(req.query.to as string).getTime());
 
-    // 5개 도메인 병렬 쿼리
-    const [admissions, procedures, appointments, homecare, totalBeds] = await Promise.all([
+    // 6개 도메인 병렬 쿼리 (bedOccupancy 포함)
+    const [admissions, procedures, appointments, homecare, totalBeds, bedOccupancy] = await Promise.all([
       // 신규 입원
       prisma.$queryRawUnsafe<{ bucket: Date; count: bigint }[]>(
         `SELECT date_trunc($1, "admitDate") as bucket, COUNT(*)::bigint as count
@@ -173,22 +173,21 @@ router.get(
       ),
       // 전체 베드 수
       prisma.bed.count({ where: { deletedAt: null, isActive: true } }),
+      // 병상 가동 (해당 날짜에 활성 입원 수)
+      prisma.$queryRawUnsafe<{ bucket: Date; count: bigint }[]>(
+        `SELECT gs.bucket, COUNT(a.id)::bigint as count FROM
+         (SELECT generate_series(
+           date_trunc($1, $2::timestamp),
+           date_trunc($1, $3::timestamp),
+           ('1 ' || $1)::interval
+         ) as bucket) gs
+         LEFT JOIN "Admission" a ON a."deletedAt" IS NULL
+           AND a."admitDate" <= gs.bucket + ('1 ' || $1)::interval
+           AND (a."dischargeDate" IS NULL OR a."dischargeDate" > gs.bucket)
+         GROUP BY gs.bucket ORDER BY gs.bucket`,
+        truncUnit, fromDate, toDate,
+      ),
     ]);
-
-    // 병상 가동 (해당 날짜에 활성 입원 수)
-    const bedOccupancy = await prisma.$queryRawUnsafe<{ bucket: Date; count: bigint }[]>(
-      `SELECT gs.bucket, COUNT(a.id)::bigint as count FROM
-       (SELECT generate_series(
-         date_trunc($1, $2::timestamp),
-         date_trunc($1, $3::timestamp),
-         ('1 ' || $1)::interval
-       ) as bucket) gs
-       LEFT JOIN "Admission" a ON a."deletedAt" IS NULL
-         AND a."admitDate" <= gs.bucket + ('1 ' || $1)::interval
-         AND (a."dischargeDate" IS NULL OR a."dischargeDate" > gs.bucket)
-       GROUP BY gs.bucket ORDER BY gs.bucket`,
-      truncUnit, fromDate, toDate,
-    );
 
     // 결과 병합
     const bucketMap = new Map<string, any>();
