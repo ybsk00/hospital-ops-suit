@@ -21,6 +21,9 @@ import {
   Megaphone,
   MessageCircle,
   BarChart3,
+  Hand,
+  Zap,
+  ClipboardList,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth';
 
@@ -35,6 +38,8 @@ const navItems = [
   { href: '/dashboard/lab-approvals', label: '검사결과 승인', icon: ClipboardCheck },
   { href: '/dashboard/inbox', label: '업무함', icon: Inbox },
   { href: '/dashboard/imports', label: 'Import 현황', icon: Upload },
+  { href: '/dashboard/scheduling/manual-therapy', label: '도수예약', icon: Hand },
+  { href: '/dashboard/scheduling/rf-schedule', label: '고주파예약', icon: Zap },
   { href: '/dashboard/audit', label: '감사로그', icon: ScrollText },
   { href: '/dashboard/marketing', label: '마케팅 관리', icon: Megaphone },
   { href: '/dashboard/marketing/chatbot', label: '└ 챗봇 콘텐츠', icon: MessageCircle },

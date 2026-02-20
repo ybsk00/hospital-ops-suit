@@ -315,7 +315,116 @@ export async function checkTimeConflict(params: {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  4. 반복 주기 매핑
+//  4. 치료사 매칭 (도수치료)
+// ═══════════════════════════════════════════════════════════
+
+export async function matchTherapist(name?: string): Promise<
+  | { status: 'found'; therapist: { id: string; name: string } }
+  | { status: 'multiple'; therapists: { id: string; name: string }[] }
+  | { status: 'notFound' }
+> {
+  const where: any = { deletedAt: null, isActive: true, specialty: '도수' };
+  if (name) where.name = { contains: name };
+
+  const therapists = await prisma.therapist.findMany({ where, take: 10 });
+
+  if (therapists.length === 0) return { status: 'notFound' };
+  if (therapists.length === 1) return { status: 'found', therapist: { id: therapists[0].id, name: therapists[0].name } };
+  return { status: 'multiple', therapists: therapists.map(t => ({ id: t.id, name: t.name })) };
+}
+
+/**
+ * 날짜+시간에 빈 치료사 중 예약 적은 순으로 자동배정
+ */
+export async function autoAssignTherapist(date: string, time: string): Promise<{ id: string; name: string } | null> {
+  const therapists = await prisma.therapist.findMany({
+    where: { deletedAt: null, isActive: true, specialty: '도수' },
+  });
+
+  if (therapists.length === 0) return null;
+
+  // 해당 날짜+시간에 이미 예약된 치료사 제외
+  const bookedSlots = await prisma.manualTherapySlot.findMany({
+    where: {
+      date: new Date(date),
+      timeSlot: time,
+      deletedAt: null,
+      status: { not: 'CANCELLED' },
+    },
+    select: { therapistId: true },
+  });
+
+  const bookedIds = new Set(bookedSlots.map(s => s.therapistId));
+  const available = therapists.filter(t => !bookedIds.has(t.id));
+
+  if (available.length === 0) return null;
+
+  // 해당 날짜 예약 건수 기준으로 가장 여유있는 치료사
+  const dayCounts = await prisma.manualTherapySlot.groupBy({
+    by: ['therapistId'],
+    where: {
+      date: new Date(date),
+      deletedAt: null,
+      status: { not: 'CANCELLED' },
+      therapistId: { in: available.map(t => t.id) },
+    },
+    _count: { id: true },
+  });
+
+  const countMap = new Map(dayCounts.map(c => [c.therapistId, c._count.id]));
+  available.sort((a, b) => (countMap.get(a.id) || 0) - (countMap.get(b.id) || 0));
+
+  return { id: available[0].id, name: available[0].name };
+}
+
+/**
+ * RF 기계 자동배정: 빈 기계 중 번호 낮은 순
+ */
+export async function autoAssignRfRoom(
+  date: string,
+  time: string,
+  duration: number,
+): Promise<{ id: string; name: string } | null> {
+  const rooms = await prisma.rfTreatmentRoom.findMany({
+    where: { isActive: true },
+    orderBy: { displayOrder: 'asc' },
+  });
+
+  const existingSlots = await prisma.rfScheduleSlot.findMany({
+    where: {
+      date: new Date(date),
+      deletedAt: null,
+      status: { not: 'CANCELLED' },
+    },
+    select: { roomId: true, startTime: true, duration: true },
+  });
+
+  function timeToMin(t: string) {
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + m;
+  }
+
+  const checkStart = timeToMin(time);
+  const checkEnd = checkStart + duration + 30;
+
+  for (const room of rooms) {
+    const roomSlots = existingSlots.filter(s => s.roomId === room.id);
+    const hasConflict = roomSlots.some(s => {
+      const sStart = timeToMin(s.startTime);
+      const sEnd = sStart + s.duration + 30;
+      return checkStart < sEnd && sStart < checkEnd;
+    });
+
+    if (!hasConflict) {
+      return { id: room.id, name: room.name };
+    }
+  }
+
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  5. 반복 주기 매핑
 // ═══════════════════════════════════════════════════════════
 
 import type { ProcedureFrequency } from '@prisma/client';

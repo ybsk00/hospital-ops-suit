@@ -65,6 +65,7 @@ enum PermissionResource {
   DEPARTMENTS
   CHATBOT
   DASHBOARD
+  SCHEDULING
 }
 
 enum PermissionAction {
@@ -120,6 +121,7 @@ model User {
   labApprovals          LabApproval[]          @relation("LabApprover")
   labAnalysisApprovals  LabAnalysis[]          @relation("LabAnalysisApprover")
   pendingActions        PendingAction[]                            // Phase 7
+  staffDayNotes         StaffDayNote[]      @relation("StaffNoteCreator") // Phase 8
 }
 
 model UserDepartment {
@@ -159,12 +161,14 @@ model Patient {
   updatedAt    DateTime      @updatedAt
   deletedAt    DateTime?
 
-  admissions     Admission[]
-  appointments   Appointment[]
-  homecareVisits HomecareVisit[]
-  labResults     LabResult[]
-  labAnalyses    LabAnalysis[]
-  aiReports      AiReport[]
+  admissions          Admission[]
+  appointments        Appointment[]
+  homecareVisits      HomecareVisit[]
+  labResults          LabResult[]
+  labAnalyses         LabAnalysis[]
+  aiReports           AiReport[]
+  manualTherapySlots  ManualTherapySlot[]  // Phase 8
+  rfScheduleSlots     RfScheduleSlot[]     // Phase 8
 }
 
 // ============================================================
@@ -989,4 +993,117 @@ model ChatbotAnalytics {
 
   @@index([createdAt])
   @@index([category])
+}
+
+// ============================================================
+// Phase 8: 스케줄링 (도수예약, 고주파예약)
+// ============================================================
+
+enum PatientType {
+  INPATIENT
+  OUTPATIENT
+}
+
+enum SlotStatus {
+  BOOKED
+  COMPLETED
+  NO_SHOW
+  CANCELLED
+}
+
+// ── 치료사 ──
+model Therapist {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  specialty    String?
+  isActive     Boolean  @default(true)
+  workSchedule Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+
+  manualTherapySlots ManualTherapySlot[]
+}
+
+// ── 도수예약 슬롯 ──
+model ManualTherapySlot {
+  id             String            @id @default(uuid())
+  therapistId    String
+  therapist      Therapist         @relation(fields: [therapistId], references: [id])
+  patientId      String?
+  patient        Patient?          @relation(fields: [patientId], references: [id])
+  date           DateTime          @db.Date
+  timeSlot       String
+  duration       Int               @default(30)
+  treatmentCodes String[]
+  sessionMarker  String?
+  patientType    PatientType       @default(INPATIENT)
+  patientName    String?
+  status         SlotStatus        @default(BOOKED)
+  notes          String?
+  source         AppointmentSource @default(INTERNAL)
+  chatSessionId  String?
+  version        Int               @default(0)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  deletedAt      DateTime?
+
+  @@unique([therapistId, date, timeSlot])
+  @@index([date, status])
+  @@index([patientId])
+}
+
+// ── 고주파 치료실/기계 ──
+model RfTreatmentRoom {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  slots RfScheduleSlot[]
+}
+
+// ── 고주파예약 슬롯 ──
+model RfScheduleSlot {
+  id            String            @id @default(uuid())
+  roomId        String
+  room          RfTreatmentRoom   @relation(fields: [roomId], references: [id])
+  patientId     String
+  patient       Patient           @relation(fields: [patientId], references: [id])
+  doctorCode    String
+  date          DateTime          @db.Date
+  startTime     String
+  duration      Int
+  patientType   PatientType       @default(INPATIENT)
+  patientName   String?
+  chartNumber   String?
+  status        SlotStatus        @default(BOOKED)
+  notes         String?
+  source        AppointmentSource @default(INTERNAL)
+  chatSessionId String?
+  version       Int               @default(0)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  deletedAt     DateTime?
+
+  @@index([roomId, date])
+  @@index([patientId, date])
+  @@index([date, status])
+}
+
+// ── 직원 일일 메모 (비고, OFF 등) ──
+model StaffDayNote {
+  id          String   @id @default(uuid())
+  noteType    String
+  date        DateTime @db.Date
+  content     String
+  targetId    String?
+  createdById String
+  createdBy   User     @relation("StaffNoteCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([noteType, date])
 }

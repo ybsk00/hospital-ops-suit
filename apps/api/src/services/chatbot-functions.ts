@@ -518,7 +518,223 @@ export async function getWeeklyStats(args: Record<string, any>) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  Gemini Function Declarations (20개)
+//  READ: 도수/고주파 스케줄링 (8개)
+// ═══════════════════════════════════════════════════════════
+
+// ─── 15. 도수예약 조회 ───
+export async function getManualTherapySchedule(args: Record<string, any>) {
+  const dateStr = args.date || new Date().toISOString().slice(0, 10);
+  const d = new Date(dateStr + 'T00:00:00');
+  const day = d.getDay();
+  const monday = new Date(d);
+  monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+
+  const weekDates: string[] = [];
+  for (let i = 0; i < 6; i++) {
+    const dd = new Date(monday);
+    dd.setDate(monday.getDate() + i);
+    weekDates.push(dd.toISOString().slice(0, 10));
+  }
+
+  const where: any = {
+    deletedAt: null,
+    date: { gte: new Date(weekDates[0]), lte: new Date(weekDates[5]) },
+    status: { not: 'CANCELLED' },
+  };
+
+  if (args.therapistName) {
+    where.therapist = { name: { contains: args.therapistName } };
+  }
+
+  const slots = await prisma.manualTherapySlot.findMany({
+    where,
+    include: {
+      therapist: { select: { name: true } },
+      patient: { select: { name: true, emrPatientId: true } },
+    },
+    orderBy: [{ date: 'asc' }, { timeSlot: 'asc' }],
+  });
+
+  return {
+    week: { start: weekDates[0], end: weekDates[5] },
+    total: slots.length,
+    slots: slots.map(s => ({
+      date: s.date.toISOString().slice(0, 10),
+      time: s.timeSlot,
+      therapist: s.therapist.name,
+      patient: s.patient?.name || s.patientName || '',
+      treatmentCodes: s.treatmentCodes,
+      sessionMarker: s.sessionMarker,
+      patientType: s.patientType,
+      status: s.status,
+    })),
+  };
+}
+
+// ─── 16. 고주파예약 조회 ───
+export async function getRfSchedule(args: Record<string, any>) {
+  const dateStr = args.date || new Date().toISOString().slice(0, 10);
+
+  const where: any = {
+    deletedAt: null,
+    date: new Date(dateStr),
+    status: { not: 'CANCELLED' },
+  };
+
+  if (args.roomName) {
+    where.room = { name: args.roomName };
+  }
+
+  const slots = await prisma.rfScheduleSlot.findMany({
+    where,
+    include: {
+      room: { select: { name: true } },
+      patient: { select: { name: true, emrPatientId: true } },
+    },
+    orderBy: [{ startTime: 'asc' }],
+  });
+
+  return {
+    date: dateStr,
+    total: slots.length,
+    slots: slots.map(s => ({
+      room: s.room.name + '번',
+      patient: s.patient?.name || s.patientName || '',
+      chartNumber: s.chartNumber || s.patient?.emrPatientId || '',
+      doctorCode: s.doctorCode,
+      startTime: s.startTime,
+      duration: s.duration,
+      patientType: s.patientType,
+      status: s.status,
+    })),
+  };
+}
+
+// ─── 17. 치료사 빈 슬롯 확인 ───
+export async function getTherapistAvailability(args: Record<string, any>) {
+  const dateStr = args.date || new Date().toISOString().slice(0, 10);
+
+  const therapistWhere: any = { deletedAt: null, isActive: true, specialty: '도수' };
+  if (args.therapistName) {
+    therapistWhere.name = { contains: args.therapistName };
+  }
+
+  const therapists = await prisma.therapist.findMany({ where: therapistWhere });
+
+  const timeSlots = [
+    '09:00','09:30','10:00','10:30','11:00','11:30',
+    '12:00','12:30','13:00','13:30',
+    '14:00','14:30','15:00','15:30','16:00','16:30',
+    '17:00','17:30',
+  ];
+
+  const bookedSlots = await prisma.manualTherapySlot.findMany({
+    where: {
+      date: new Date(dateStr),
+      deletedAt: null,
+      status: { not: 'CANCELLED' },
+      therapistId: { in: therapists.map(t => t.id) },
+    },
+    select: { therapistId: true, timeSlot: true },
+  });
+
+  const bookedMap = new Set(bookedSlots.map(s => `${s.therapistId}:${s.timeSlot}`));
+
+  return {
+    date: dateStr,
+    therapists: therapists.map(t => ({
+      name: t.name,
+      availableSlots: timeSlots.filter(ts => !bookedMap.has(`${t.id}:${ts}`)),
+      bookedCount: bookedSlots.filter(s => s.therapistId === t.id).length,
+      totalSlots: timeSlots.length,
+    })),
+  };
+}
+
+// ─── 18. 고주파 기계 가용성 ───
+export async function checkRfAvailability(args: Record<string, any>) {
+  const dateStr = args.date || new Date().toISOString().slice(0, 10);
+
+  const rooms = await prisma.rfTreatmentRoom.findMany({
+    where: { isActive: true },
+    orderBy: { displayOrder: 'asc' },
+  });
+
+  const existingSlots = await prisma.rfScheduleSlot.findMany({
+    where: {
+      date: new Date(dateStr),
+      deletedAt: null,
+      status: { not: 'CANCELLED' },
+    },
+    select: { roomId: true, startTime: true, duration: true },
+  });
+
+  function timeToMin(t: string) {
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + m;
+  }
+
+  const checkTime = args.time || '09:00';
+  const checkDuration = args.duration || 120;
+  const checkStart = timeToMin(checkTime);
+  const checkEnd = checkStart + checkDuration + 30; // 30분 버퍼
+
+  const availability = rooms.map(room => {
+    const roomSlots = existingSlots.filter(s => s.roomId === room.id);
+    const hasConflict = roomSlots.some(s => {
+      const sStart = timeToMin(s.startTime);
+      const sEnd = sStart + s.duration + 30;
+      return checkStart < sEnd && sStart < checkEnd;
+    });
+
+    return {
+      room: room.name + '번',
+      available: !hasConflict,
+      bookedSlots: roomSlots.length,
+    };
+  });
+
+  return {
+    date: dateStr,
+    requestedTime: checkTime,
+    requestedDuration: checkDuration,
+    availableRooms: availability.filter(a => a.available).map(a => a.room),
+    allRooms: availability,
+  };
+}
+
+// ─── 19. 오늘 전체 스케줄 요약 ───
+export async function getTodayScheduleOverview() {
+  const today = new Date().toISOString().slice(0, 10);
+  const todayDate = new Date(today);
+
+  const [manualSlots, rfSlots, appointments] = await Promise.all([
+    prisma.manualTherapySlot.count({
+      where: { date: todayDate, deletedAt: null, status: { not: 'CANCELLED' } },
+    }),
+    prisma.rfScheduleSlot.count({
+      where: { date: todayDate, deletedAt: null, status: { not: 'CANCELLED' } },
+    }),
+    prisma.appointment.count({
+      where: {
+        startAt: { gte: new Date(today + 'T00:00:00+09:00'), lt: new Date(today + 'T23:59:59+09:00') },
+        deletedAt: null,
+        status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+      },
+    }),
+  ]);
+
+  return {
+    date: today,
+    manualTherapy: manualSlots,
+    rfTherapy: rfSlots,
+    outpatientAppointments: appointments,
+    total: manualSlots + rfSlots + appointments,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Gemini Function Declarations (32개)
 // ═══════════════════════════════════════════════════════════
 
 const S = SchemaType;
@@ -666,7 +882,127 @@ const NEW_READ_FUNCTIONS = [
   },
 ];
 
-// ── WRITE 6개 ──
+// ── 스케줄링 READ 5개 ──
+const SCHEDULING_READ_FUNCTIONS = [
+  {
+    name: 'getManualTherapySchedule',
+    description: '도수치료 예약 주간 스케줄을 조회합니다.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        date: { type: S.STRING, description: '기준 날짜 YYYY-MM-DD (해당 주 전체 조회)' },
+        therapistName: { type: S.STRING, description: '치료사 이름 필터 (선택)' },
+      },
+    },
+  },
+  {
+    name: 'getRfSchedule',
+    description: '고주파(RF) 치료 예약 일간 스케줄을 조회합니다.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        date: { type: S.STRING, description: '날짜 YYYY-MM-DD (기본: 오늘)' },
+        roomName: { type: S.STRING, description: '기계 번호 (선택, 예: "1", "5")' },
+      },
+    },
+  },
+  {
+    name: 'getTherapistAvailability',
+    description: '도수 치료사의 특정 날짜 빈 시간대를 확인합니다.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        date: { type: S.STRING, description: '날짜 YYYY-MM-DD' },
+        therapistName: { type: S.STRING, description: '치료사 이름 (선택, 없으면 전체)' },
+      },
+      required: ['date'],
+    },
+  },
+  {
+    name: 'checkRfAvailability',
+    description: '고주파 기계 가용성을 확인합니다. 빈 기계 목록을 반환.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        date: { type: S.STRING, description: '날짜 YYYY-MM-DD' },
+        time: { type: S.STRING, description: '시작시간 HH:MM (선택)' },
+        duration: { type: S.NUMBER, description: '소요시간(분, 기본 120)' },
+      },
+      required: ['date'],
+    },
+  },
+  {
+    name: 'getTodayScheduleOverview',
+    description: '오늘 전체 스케줄 요약 (도수+고주파+외래).',
+    parameters: { type: S.OBJECT, properties: {} },
+  },
+];
+
+// ── 스케줄링 WRITE 4개 ──
+const SCHEDULING_WRITE_FUNCTIONS = [
+  {
+    name: 'createManualTherapySlot',
+    description: '도수치료 예약을 생성합니다. "김아무개 2/28 14시 도수 예약해줘" 형태.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름' },
+        date: { type: S.STRING, description: '날짜 YYYY-MM-DD' },
+        time: { type: S.STRING, description: '시간 HH:MM' },
+        therapistName: { type: S.STRING, description: '치료사 이름 (선택, 없으면 자동배정)' },
+        treatmentCodes: { type: S.ARRAY, items: { type: S.STRING }, description: '치료코드 배열 (온,림프,페인,도수,SC)' },
+        patientType: { type: S.STRING, description: 'INPATIENT 또는 OUTPATIENT' },
+      },
+      required: ['patientName', 'date', 'time'],
+    },
+  },
+  {
+    name: 'cancelManualTherapySlot',
+    description: '도수치료 예약을 취소합니다.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름' },
+        date: { type: S.STRING, description: '날짜 YYYY-MM-DD (선택)' },
+        time: { type: S.STRING, description: '시간 HH:MM (선택)' },
+        reason: { type: S.STRING, description: '취소 사유' },
+      },
+      required: ['patientName'],
+    },
+  },
+  {
+    name: 'createRfScheduleSlot',
+    description: '고주파(RF) 치료 예약을 생성합니다.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름' },
+        date: { type: S.STRING, description: '날짜 YYYY-MM-DD' },
+        time: { type: S.STRING, description: '시작시간 HH:MM' },
+        duration: { type: S.NUMBER, description: '소요시간(분, 기본 120)' },
+        doctorCode: { type: S.STRING, description: '담당의 코드 C 또는 J (선택)' },
+        roomName: { type: S.STRING, description: '기계번호 (선택, 없으면 자동배정)' },
+        patientType: { type: S.STRING, description: 'INPATIENT 또는 OUTPATIENT' },
+      },
+      required: ['patientName', 'date', 'time'],
+    },
+  },
+  {
+    name: 'cancelRfScheduleSlot',
+    description: '고주파(RF) 치료 예약을 취소합니다.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름' },
+        date: { type: S.STRING, description: '날짜 (선택)' },
+        reason: { type: S.STRING, description: '취소 사유' },
+      },
+      required: ['patientName'],
+    },
+  },
+];
+
+// ── 기존 WRITE 6개 ──
 const WRITE_FUNCTIONS = [
   {
     name: 'createAppointment',
@@ -763,17 +1099,21 @@ const WRITE_FUNCTIONS = [
   },
 ];
 
-// ── 전체 합치기 ──
+// ── 전체 합치기 (32개: READ 14+5 + WRITE 6+4 + 기타 3) ──
 export const ALL_FUNCTION_DECLARATIONS = [
   ...READ_FUNCTIONS,
   ...NEW_READ_FUNCTIONS,
+  ...SCHEDULING_READ_FUNCTIONS,
   ...WRITE_FUNCTIONS,
+  ...SCHEDULING_WRITE_FUNCTIONS,
 ];
 
 // ── WRITE 함수명 Set (분기 판별용) ──
 export const WRITE_FUNCTION_NAMES = new Set([
   'createAppointment', 'modifyAppointment', 'cancelAppointment',
   'createProcedurePlan', 'modifyProcedurePlan', 'cancelProcedurePlan',
+  'createManualTherapySlot', 'cancelManualTherapySlot',
+  'createRfScheduleSlot', 'cancelRfScheduleSlot',
 ]);
 
 // ═══════════════════════════════════════════════════════════
@@ -814,6 +1154,16 @@ export async function executeFunction(
       return checkTimeSlotAvailability(args);
     case 'getWeeklyStats':
       return getWeeklyStats(args);
+    case 'getManualTherapySchedule':
+      return getManualTherapySchedule(args);
+    case 'getRfSchedule':
+      return getRfSchedule(args);
+    case 'getTherapistAvailability':
+      return getTherapistAvailability(args);
+    case 'checkRfAvailability':
+      return checkRfAvailability(args);
+    case 'getTodayScheduleOverview':
+      return getTodayScheduleOverview();
     default:
       return { error: `알 수 없는 함수: ${name}` };
   }

@@ -27,6 +27,10 @@ import labApprovalRoutes from './routes/labApprovals';
 import marketingRoutes from './routes/marketing';
 import patientChatbotRoutes from './routes/patientChatbot';
 import youtubeRoutes from './routes/youtube';
+import therapistRoutes from './routes/therapists';
+import manualTherapyRoutes from './routes/manualTherapy';
+import staffNoteRoutes from './routes/staffNotes';
+import rfScheduleRoutes from './routes/rfSchedule';
 
 const app = express();
 
@@ -85,6 +89,10 @@ app.use('/api/lab-approvals', labApprovalRoutes);
 app.use('/api/marketing', marketingRoutes);
 app.use('/api/patient-chatbot', patientChatbotRoutes);
 app.use('/api/youtube', youtubeRoutes);
+app.use('/api/therapists', therapistRoutes);
+app.use('/api/manual-therapy', manualTherapyRoutes);
+app.use('/api/staff-notes', staffNoteRoutes);
+app.use('/api/rf-schedule', rfScheduleRoutes);
 
 // 헬스 체크
 app.get('/health', (_req, res) => {
