@@ -703,7 +703,180 @@ export async function checkRfAvailability(args: Record<string, any>) {
   };
 }
 
-// ─── 19. 오늘 전체 스케줄 요약 ───
+// ─── 19. 환자 예약 통합 검색 ───
+export async function findPatientBookings(args: Record<string, any>) {
+  const name = args.patientName || '';
+  const dateStr = args.date; // optional YYYY-MM-DD
+
+  // 환자 검색 (이름 부분 매칭)
+  const patients = await prisma.patient.findMany({
+    where: { name: { contains: name }, deletedAt: null },
+    take: 10,
+  });
+
+  // patientName으로 직접 저장된 슬롯도 있으므로 이름 기반 검색 병행
+  const patientIds = patients.map(p => p.id);
+
+  // 날짜 조건: 지정 시 해당 날짜, 미지정 시 오늘 이후
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  let dateFilter: Date | undefined;
+  let dateGte: Date | undefined;
+  if (dateStr) {
+    dateFilter = new Date(dateStr);
+  } else {
+    dateGte = today;
+  }
+
+  const bookings: Array<{
+    type: string;
+    date: string;
+    time: string;
+    detail: string;
+    id: string;
+  }> = [];
+
+  // ① 도수치료 (ManualTherapySlot) - patientId 또는 patientName
+  const mtWhere: any = {
+    deletedAt: null,
+    status: { not: 'CANCELLED' },
+    OR: [
+      ...(patientIds.length > 0 ? [{ patientId: { in: patientIds } }] : []),
+      { patientName: { contains: name } },
+    ],
+  };
+  if (dateFilter) mtWhere.date = dateFilter;
+  else if (dateGte) mtWhere.date = { gte: dateGte };
+
+  const manualSlots = await prisma.manualTherapySlot.findMany({
+    where: mtWhere,
+    include: { therapist: { select: { name: true } } },
+    orderBy: [{ date: 'asc' }, { timeSlot: 'asc' }],
+    take: 10,
+  });
+
+  for (const s of manualSlots) {
+    bookings.push({
+      type: '도수치료',
+      date: s.date.toISOString().slice(0, 10),
+      time: s.timeSlot,
+      detail: `치료사: ${s.therapist.name}`,
+      id: s.id,
+    });
+  }
+
+  // ② 고주파 (RfScheduleSlot)
+  const rfWhere: any = {
+    deletedAt: null,
+    status: { not: 'CANCELLED' },
+    OR: [
+      ...(patientIds.length > 0 ? [{ patientId: { in: patientIds } }] : []),
+      { patientName: { contains: name } },
+    ],
+  };
+  if (dateFilter) rfWhere.date = dateFilter;
+  else if (dateGte) rfWhere.date = { gte: dateGte };
+
+  const rfSlots = await prisma.rfScheduleSlot.findMany({
+    where: rfWhere,
+    include: { room: { select: { name: true } } },
+    orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
+    take: 10,
+  });
+
+  for (const s of rfSlots) {
+    bookings.push({
+      type: '고주파',
+      date: s.date.toISOString().slice(0, 10),
+      time: s.startTime,
+      detail: `${s.room.name}번 기계, ${s.duration}분`,
+      id: s.id,
+    });
+  }
+
+  // ③ 외래예약 (Appointment)
+  if (patientIds.length > 0) {
+    const aptWhere: any = {
+      patientId: { in: patientIds },
+      deletedAt: null,
+      status: { in: ['BOOKED', 'CHECKED_IN'] },
+    };
+    if (dateFilter) {
+      const dayStart = new Date(dateStr + 'T00:00:00+09:00');
+      const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+      aptWhere.startAt = { gte: dayStart, lt: dayEnd };
+    } else if (dateGte) {
+      aptWhere.startAt = { gte: dateGte };
+    }
+
+    const appointments = await prisma.appointment.findMany({
+      where: aptWhere,
+      include: { doctor: { select: { name: true } } },
+      orderBy: { startAt: 'asc' },
+      take: 10,
+    });
+
+    for (const a of appointments) {
+      bookings.push({
+        type: '외래예약',
+        date: new Date(a.startAt).toISOString().slice(0, 10),
+        time: new Date(a.startAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+        detail: `담당의: ${a.doctor.name}`,
+        id: a.id,
+      });
+    }
+  }
+
+  // ④ 처치 (ProcedureExecution)
+  if (patientIds.length > 0) {
+    const procWhere: any = {
+      plan: { admission: { patientId: { in: patientIds } } },
+      deletedAt: null,
+      status: { in: ['SCHEDULED', 'IN_PROGRESS'] },
+    };
+    if (dateFilter) {
+      const dayStart = new Date(dateStr + 'T00:00:00+09:00');
+      const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+      procWhere.scheduledAt = { gte: dayStart, lt: dayEnd };
+    } else if (dateGte) {
+      procWhere.scheduledAt = { gte: dateGte };
+    }
+
+    const executions = await prisma.procedureExecution.findMany({
+      where: procWhere,
+      include: { plan: { include: { procedureCatalog: { select: { name: true } } } } },
+      orderBy: { scheduledAt: 'asc' },
+      take: 10,
+    });
+
+    for (const e of executions) {
+      bookings.push({
+        type: '처치',
+        date: new Date(e.scheduledAt).toISOString().slice(0, 10),
+        time: new Date(e.scheduledAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+        detail: e.plan.procedureCatalog.name,
+        id: e.id,
+      });
+    }
+  }
+
+  // 날짜→시간 순 정렬
+  bookings.sort((a, b) => {
+    const dateComp = a.date.localeCompare(b.date);
+    if (dateComp !== 0) return dateComp;
+    return a.time.localeCompare(b.time);
+  });
+
+  return {
+    patientName: name,
+    date: dateStr || '오늘 이후',
+    total: bookings.length,
+    bookings,
+  };
+}
+
+// ─── 20. 오늘 전체 스케줄 요약 ───
 export async function getTodayScheduleOverview() {
   const today = new Date().toISOString().slice(0, 10);
   const todayDate = new Date(today);
@@ -935,6 +1108,18 @@ const SCHEDULING_READ_FUNCTIONS = [
     name: 'getTodayScheduleOverview',
     description: '오늘 전체 스케줄 요약 (도수+고주파+외래).',
     parameters: { type: S.OBJECT, properties: {} },
+  },
+  {
+    name: 'findPatientBookings',
+    description: '환자의 모든 예약(도수치료, 고주파, 외래예약, 처치)을 통합 검색합니다. 취소/변경 요청 시 예약 유형이 불명확하면 이 함수를 먼저 호출하세요.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름' },
+        date: { type: S.STRING, description: '날짜 YYYY-MM-DD (선택, 없으면 오늘 이후 전체)' },
+      },
+      required: ['patientName'],
+    },
   },
 ];
 
@@ -1204,6 +1389,8 @@ export async function executeFunction(
       return checkRfAvailability(args);
     case 'getTodayScheduleOverview':
       return getTodayScheduleOverview();
+    case 'findPatientBookings':
+      return findPatientBookings(args);
     default:
       return { error: `알 수 없는 함수: ${name}` };
   }

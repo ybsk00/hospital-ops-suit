@@ -124,6 +124,14 @@ ${now} (오늘: ${today})
 - "변경/수정/옮겨줘/바꿔줘" 키워드 → modify 함수 사용
 - 필수: patientName. 선택: newDate, newTime, newRoomName, newDuration, newDoctorCode, reason
 
+[취소/변경 시 예약 유형이 불명확한 경우 — findPatientBookings]
+- "유범석 취소해줘", "유범석 예약 취소", "2월20일 유범석 취소" 등 예약 유형(도수/고주파/외래)이 명시되지 않은 경우:
+  → 반드시 findPatientBookings(patientName, date?)를 먼저 호출하여 해당 환자의 예약을 조회
+  → 결과가 1건이면: "유범석 환자의 도수치료 09:30 예약을 취소할까요?" 라고 물어보세요.
+  → 결과가 여러건이면: 목록을 보여주고 "어떤 예약을 취소하시겠어요?" 질문
+  → 결과가 0건이면: "해당 날짜에 유범석 환자의 예약이 없습니다" 안내
+- 예약 유형이 명확한 경우(예: "도수 취소", "고주파 취소") → 바로 해당 cancel 함수 호출
+
 [예약 흐름]
 ① 필수 정보(환자이름, 날짜, 시간) 확인. 부족하면 부족한 것만 물어보세요.
 ② 필수 정보가 갖줘지면 즉시 해당 create/modify/cancel Function을 호출하세요!
@@ -267,19 +275,24 @@ router.post(
 
       if (WRITE_FUNCTION_NAMES.has(fc.name)) {
         // ── WRITE Function → PendingAction 플로우 ──
-        const writeResult = await handleWriteFunction(fc.name, fc.args as Record<string, any>, user, session.id);
+        try {
+          const writeResult = await handleWriteFunction(fc.name, fc.args as Record<string, any>, user, session.id);
 
-        responseData.type = writeResult.type;
-        responseData.message = writeResult.message;
+          responseData.type = writeResult.type;
+          responseData.message = writeResult.message;
 
-        if (writeResult.type === 'confirm') {
-          responseData.pendingId = writeResult.pendingId;
-          responseData.displayData = writeResult.displayData;
-        } else if (writeResult.type === 'conflict') {
-          responseData.alternatives = writeResult.alternatives;
-          responseData.displayData = writeResult.displayData;
-        } else if (writeResult.type === 'disambiguation') {
-          responseData.patients = writeResult.patients;
+          if (writeResult.type === 'confirm') {
+            responseData.pendingId = writeResult.pendingId;
+            responseData.displayData = writeResult.displayData;
+          } else if (writeResult.type === 'conflict') {
+            responseData.alternatives = writeResult.alternatives;
+            responseData.displayData = writeResult.displayData;
+          } else if (writeResult.type === 'disambiguation') {
+            responseData.patients = writeResult.patients;
+          }
+        } catch (err) {
+          console.error('[Chatbot] WRITE 함수 실행 오류:', err);
+          responseData.message = '예약 처리 중 오류가 발생했습니다. 다시 시도해 주세요.';
         }
       } else {
         // ── READ Function → DB 조회 후 Gemini에 결과 반환 ──

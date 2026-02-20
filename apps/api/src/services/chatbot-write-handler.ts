@@ -363,7 +363,7 @@ async function handleCancelAppointment(
 
   const patient = patientResult.patient;
 
-  const where: any = {
+  const aptCancelWhere: any = {
     patientId: patient.id,
     deletedAt: null,
     status: { in: ['BOOKED', 'CHECKED_IN'] },
@@ -372,11 +372,16 @@ async function handleCancelAppointment(
   if (args.date) {
     const dayStart = new Date(args.date + 'T00:00:00+09:00');
     const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
-    where.startAt = { gte: dayStart, lt: dayEnd };
+    aptCancelWhere.startAt = { gte: dayStart, lt: dayEnd };
+  } else {
+    // 날짜 미지정 → 오늘 이후 가장 가까운 예약
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    aptCancelWhere.startAt = { gte: today };
   }
 
   const existingApt = await prisma.appointment.findFirst({
-    where,
+    where: aptCancelWhere,
     include: { doctor: { select: { name: true } } },
     orderBy: { startAt: 'asc' },
   });
@@ -1503,13 +1508,20 @@ async function handleCancelManualTherapySlot(
   } else {
     where.patientName = patientName;
   }
-  if (args.date) where.date = new Date(args.date);
+  if (args.date) {
+    where.date = new Date(args.date);
+  } else {
+    // 날짜 미지정 → 오늘 이후 가장 가까운 예약
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    where.date = { gte: today };
+  }
   if (args.time) where.timeSlot = args.time;
 
   const slot = await prisma.manualTherapySlot.findFirst({
     where,
     include: { therapist: { select: { name: true } } },
-    orderBy: { date: 'asc' },
+    orderBy: [{ date: 'asc' }, { timeSlot: 'asc' }],
   });
 
   if (!slot) {
@@ -1806,21 +1818,28 @@ async function handleCancelRfScheduleSlot(
     };
   }
 
-  const where: any = {
+  const rfCancelWhere: any = {
     deletedAt: null,
     status: { not: 'CANCELLED' },
   };
   if (patientId) {
-    where.patientId = patientId;
+    rfCancelWhere.patientId = patientId;
   } else {
-    where.patientName = patientName;
+    rfCancelWhere.patientName = patientName;
   }
-  if (args.date) where.date = new Date(args.date);
+  if (args.date) {
+    rfCancelWhere.date = new Date(args.date);
+  } else {
+    // 날짜 미지정 → 오늘 이후 가장 가까운 예약
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    rfCancelWhere.date = { gte: today };
+  }
 
   const slot = await prisma.rfScheduleSlot.findFirst({
-    where,
+    where: rfCancelWhere,
     include: { room: { select: { name: true } } },
-    orderBy: { date: 'asc' },
+    orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
   });
 
   if (!slot) {
