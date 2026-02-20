@@ -652,6 +652,13 @@ export default function RfSchedulePage() {
         </div>
       </div>
 
+      {/* ═══ DAILY VIEW - Error ═══ */}
+      {viewMode === 'daily' && !data && !loading && (
+        <div className="bg-white rounded-lg border p-8 text-center text-slate-400">
+          데이터를 불러올 수 없습니다. API 서버 연결을 확인하세요.
+        </div>
+      )}
+
       {/* ═══ DAILY VIEW ═══ */}
       {viewMode === 'daily' && data && (
         <>
@@ -764,6 +771,11 @@ export default function RfSchedulePage() {
       )}
 
       {/* ═══ WEEKLY VIEW ═══ */}
+      {viewMode === 'weekly' && !weeklyData && !loading && (
+        <div className="bg-white rounded-lg border p-8 text-center text-slate-400">
+          데이터를 불러올 수 없습니다. API 서버 연결을 확인하세요.
+        </div>
+      )}
       {viewMode === 'weekly' && weeklyData && (
         <>
           {/* Week Nav */}
@@ -789,15 +801,15 @@ export default function RfSchedulePage() {
           <div className="bg-white rounded-lg border overflow-x-auto">
             <div style={{ minWidth: '700px' }}>
               {/* Header: Day columns */}
-              <div className="grid border-b-2 border-slate-300" style={{ gridTemplateColumns: '100px repeat(6, 1fr)' }}>
-                <div className="px-2 py-2.5 text-xs font-semibold text-slate-500 border-r border-slate-200 flex items-center justify-center">기계</div>
+              <div className="grid border-b-2 border-slate-300" style={{ gridTemplateColumns: '60px repeat(6, 1fr)' }}>
+                <div className="px-2 py-2 text-xs font-semibold text-slate-500 border-r border-slate-200 flex items-center justify-center">기계</div>
                 {getWeekDatesFromStart(weeklyData.week.start).map((d, i) => {
-                  const dayData = weeklyData.days[d];
+                  const dayData = weeklyData.days?.[d];
                   return (
                     <div
                       key={d}
                       onClick={() => navigateToDay(d)}
-                      className="px-2 py-2.5 text-center border-r border-slate-200 last:border-r-0 cursor-pointer hover:bg-blue-50 transition"
+                      className="px-1 py-2 text-center border-r border-slate-200 last:border-r-0 cursor-pointer hover:bg-blue-50 transition"
                     >
                       <div className="text-xs font-bold text-slate-700">{DAY_LABELS[i]} ({d.slice(8)}일)</div>
                       {dayData && <div className="text-[10px] text-slate-400 mt-0.5">총 {dayData.total}건</div>}
@@ -807,23 +819,23 @@ export default function RfSchedulePage() {
               </div>
 
               {/* Room Rows */}
-              {weeklyData.rooms.map((room) => (
+              {weeklyData.rooms?.map((room) => (
                 <div
                   key={room.id}
                   className="grid border-b border-slate-100"
-                  style={{ gridTemplateColumns: '100px repeat(6, 1fr)' }}
+                  style={{ gridTemplateColumns: '60px repeat(6, 1fr)' }}
                 >
-                  <div className="px-2 py-2 text-xs font-bold text-slate-700 border-r border-slate-200 flex items-center justify-center bg-slate-50">
+                  <div className="px-1 py-1 text-xs font-bold text-slate-700 border-r border-slate-200 flex items-center justify-center bg-slate-50">
                     {room.name}번
                   </div>
                   {getWeekDatesFromStart(weeklyData.week.start).map((d) => {
-                    const roomDay = weeklyData.days[d]?.byRoom?.[room.id];
+                    const roomDay = weeklyData.days?.[d]?.byRoom?.[room.id];
                     if (!roomDay || roomDay.count === 0) {
                       return (
                         <div
                           key={d}
                           onClick={() => navigateToDay(d)}
-                          className="px-1 py-1 border-r border-slate-100 last:border-r-0 cursor-pointer hover:bg-blue-50/40 min-h-[42px]"
+                          className="px-1 py-1 border-r border-slate-100 last:border-r-0 cursor-pointer hover:bg-blue-50/40 min-h-[36px]"
                         />
                       );
                     }
@@ -831,18 +843,15 @@ export default function RfSchedulePage() {
                       <div
                         key={d}
                         onClick={() => navigateToDay(d)}
-                        className="px-1 py-1 border-r border-slate-100 last:border-r-0 cursor-pointer hover:bg-blue-50/40 min-h-[42px]"
+                        className="px-1 py-1 border-r border-slate-100 last:border-r-0 cursor-pointer hover:bg-blue-50/40 min-h-[36px]"
                       >
-                        <div className="flex items-center gap-1 mb-0.5">
-                          <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-1.5 rounded">{roomDay.count}건</span>
-                        </div>
-                        {roomDay.slots.slice(0, 3).map((s, si) => (
+                        {roomDay.slots?.slice(0, 3).map((s: any, si: number) => (
                           <div key={si} className="text-[10px] text-slate-500 leading-tight truncate">
                             <span className={`font-bold ${s.doctorCode === 'C' ? 'text-blue-600' : 'text-green-600'}`}>{s.doctorCode}</span>
-                            {' '}{s.startTime} {s.patientName}
+                            {' '}{s.patientName}
                           </div>
                         ))}
-                        {roomDay.slots.length > 3 && (
+                        {(roomDay.slots?.length || 0) > 3 && (
                           <div className="text-[10px] text-slate-400">+{roomDay.slots.length - 3}건</div>
                         )}
                       </div>
@@ -855,8 +864,8 @@ export default function RfSchedulePage() {
         </>
       )}
 
-      {/* ═══ MONTHLY VIEW ═══ */}
-      {viewMode === 'monthly' && monthlyData && (
+      {/* ═══ MONTHLY VIEW - Simple Calendar ═══ */}
+      {viewMode === 'monthly' && (
         <>
           {/* Month Nav */}
           <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-2.5">
@@ -875,128 +884,70 @@ export default function RfSchedulePage() {
             </button>
           </div>
 
-          {/* Monthly - Stacked Weekly Grids */}
-          {monthlyData.weeks.map((week, wi) => {
-            const weekRooms = monthlyData.rooms;
+          {!monthlyData && !loading && (
+            <div className="bg-white rounded-lg border p-8 text-center text-slate-400">
+              데이터를 불러올 수 없습니다. API 서버 연결을 확인하세요.
+            </div>
+          )}
+
+          {monthlyData && (() => {
+            const dayCounts: Record<string, number> = {};
+            if (monthlyData.grid) {
+              for (const roomId of Object.keys(monthlyData.grid)) {
+                for (const dateStr of Object.keys(monthlyData.grid[roomId] || {})) {
+                  for (const ts of Object.keys(monthlyData.grid[roomId][dateStr] || {})) {
+                    const cell = monthlyData.grid[roomId][dateStr][ts];
+                    if (cell && typeof cell === 'object') {
+                      dayCounts[dateStr] = (dayCounts[dateStr] || 0) + 1;
+                    }
+                  }
+                }
+              }
+            }
+            const calDays = getMonthCalendarDays(monthYear, monthNum);
+            const today = new Date().toISOString().slice(0, 10);
+
             return (
-              <div key={wi} className="bg-white rounded-lg border overflow-x-auto">
-                <div style={{ minWidth: `${70 + week.dates.length * weekRooms.length * 48}px` }}>
-                  {/* Week Header: Days */}
-                  <div
-                    className="grid border-b-2 border-slate-300"
-                    style={{ gridTemplateColumns: `70px repeat(${week.dates.length}, 1fr)` }}
-                  >
-                    <div className="px-2 py-2 text-xs font-semibold text-slate-500 border-r border-slate-200 flex items-center justify-center bg-slate-50">
-                      시간
-                    </div>
-                    {week.dates.map((d, di) => {
-                      const dd = new Date(d + 'T00:00:00');
-                      const isToday = d === new Date().toISOString().slice(0, 10);
-                      return (
-                        <div
-                          key={d}
-                          onClick={() => navigateToDay(d)}
-                          className={`text-center border-r border-slate-200 last:border-r-0 cursor-pointer hover:bg-blue-50 transition ${isToday ? 'bg-blue-100' : ''}`}
-                        >
-                          <div className="py-1.5 text-xs font-semibold border-b border-slate-200">
-                            <span className={`${isToday ? 'text-blue-700' : 'text-slate-700'}`}>
-                              {String(dd.getMonth() + 1).padStart(2, '0')}.{String(dd.getDate()).padStart(2, '0')} ({DAY_LABELS[di]})
-                            </span>
-                          </div>
-                          {/* Sub-columns: Room numbers */}
-                          <div className="grid" style={{ gridTemplateColumns: `repeat(${weekRooms.length}, 1fr)` }}>
-                            {weekRooms.map((room) => (
-                              <div key={room.id} className="text-[10px] py-0.5 text-slate-500 border-r border-slate-100 last:border-r-0 truncate">
-                                {room.name}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Time Rows */}
-                  {(monthlyData.timeSlots || TIME_SLOTS_DEFAULT).map((ts: string) => (
-                    <div
-                      key={ts}
-                      className="grid border-b border-slate-100"
-                      style={{ gridTemplateColumns: `70px repeat(${week.dates.length}, 1fr)` }}
-                    >
-                      <div className="px-1 py-0.5 text-[10px] font-mono text-slate-500 border-r border-slate-200 flex items-center justify-center">
-                        {ts}
-                      </div>
-                      {week.dates.map((d) => (
-                        <div
-                          key={d}
-                          className="grid border-r border-slate-100 last:border-r-0"
-                          style={{ gridTemplateColumns: `repeat(${weekRooms.length}, 1fr)` }}
-                        >
-                          {weekRooms.map((room) => {
-                            const cell = monthlyData.grid?.[room.id]?.[d]?.[ts];
-
-                            if (cell === 'OCCUPIED') {
-                              return <div key={room.id} className="bg-blue-50/60 min-h-[28px] border-r border-slate-50 last:border-r-0" />;
-                            }
-                            if (cell === 'BUFFER') {
-                              return (
-                                <div
-                                  key={room.id}
-                                  className="min-h-[28px] border-r border-slate-50 last:border-r-0"
-                                  style={{ background: 'repeating-linear-gradient(45deg, #f1f5f9, #f1f5f9 2px, transparent 2px, transparent 6px)' }}
-                                />
-                              );
-                            }
-                            if (cell && typeof cell === 'object') {
-                              const slot = cell as SlotData;
-                              const bgColor = slot.patientType === 'OUTPATIENT' ? 'bg-green-50' : slot.patientType === 'NEW' ? 'bg-purple-50' : 'bg-pink-50';
-                              return (
-                                <div
-                                  key={room.id}
-                                  onClick={() => { setDateStr(d); setViewMode('daily'); }}
-                                  className={`${bgColor} min-h-[28px] border-r border-slate-50 last:border-r-0 cursor-pointer px-0.5 py-0.5 overflow-hidden`}
-                                >
-                                  <div className="text-[9px] leading-tight">
-                                    <div className="font-medium text-slate-800 truncate">{slot.chartNumber || ''}</div>
-                                    <div className="truncate">{slot.patientName}</div>
-                                    <div className="text-slate-400">
-                                      <span className={slot.doctorCode === 'C' ? 'text-blue-600 font-bold' : 'text-green-600 font-bold'}>({slot.doctorCode})</span>
-                                      {' '}{slot.duration}분
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            }
-                            return <div key={room.id} className="min-h-[28px] border-r border-slate-50 last:border-r-0" />;
-                          })}
-                        </div>
-                      ))}
+              <div className="bg-white rounded-lg border">
+                <div className="grid grid-cols-7 border-b">
+                  {['일', '월', '화', '수', '목', '금', '토'].map((d, i) => (
+                    <div key={d} className={`py-2 text-center text-xs font-semibold ${i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : 'text-slate-600'}`}>
+                      {d}
                     </div>
                   ))}
+                </div>
+                <div className="grid grid-cols-7">
+                  {calDays.map((day, i) => {
+                    if (!day) return <div key={`e-${i}`} className="p-2 min-h-[64px] border-b border-r border-slate-100 bg-slate-50/50" />;
+                    const dd = new Date(day + 'T00:00:00');
+                    const isToday = day === today;
+                    const count = dayCounts[day] || 0;
+                    const isSun = dd.getDay() === 0;
+                    const isSat = dd.getDay() === 6;
 
-                  {/* Staff Notes row for this week */}
-                  <div className="border-t border-slate-300 bg-slate-50">
-                    <div
-                      className="grid"
-                      style={{ gridTemplateColumns: `70px repeat(${week.dates.length}, 1fr)` }}
-                    >
-                      <div className="px-2 py-1.5 text-xs font-semibold text-slate-500 border-r border-slate-200 flex items-center">
-                        메모
-                      </div>
-                      {week.dates.map((d) => {
-                        const note = monthlyData.staffNotes.find((n) => n.date === d);
-                        return (
-                          <div key={d} className="px-1 py-1 text-[10px] text-slate-500 border-r border-slate-100 last:border-r-0">
-                            {note?.content || ''}
+                    return (
+                      <div
+                        key={day}
+                        onClick={() => navigateToDay(day)}
+                        className={`p-2 min-h-[64px] border-b border-r border-slate-100 cursor-pointer hover:bg-blue-50/50 transition ${isToday ? 'bg-blue-50' : ''}`}
+                      >
+                        <div className={`text-xs font-semibold ${isToday ? 'text-blue-600' : isSun ? 'text-red-500' : isSat ? 'text-blue-500' : 'text-slate-700'}`}>
+                          {dd.getDate()}
+                        </div>
+                        {count > 0 && (
+                          <div className="mt-1 text-center">
+                            <span className="inline-block bg-blue-100 text-blue-700 text-xs font-bold px-2 py-0.5 rounded-full">
+                              {count}
+                            </span>
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );
-          })}
+          })()}
         </>
       )}
 

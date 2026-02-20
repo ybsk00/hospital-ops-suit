@@ -686,8 +686,8 @@ export default function ManualTherapyPage() {
         </div>
       </div>
 
-      {/* Monthly View - Stacked Weekly Grids */}
-      {viewMode === 'monthly' && monthlyData && (
+      {/* Monthly View - Simple Calendar */}
+      {viewMode === 'monthly' && (
         <>
           {/* Month Nav */}
           <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-2.5">
@@ -705,118 +705,74 @@ export default function ManualTherapyPage() {
             </button>
           </div>
 
-          {/* Stacked Weekly Grids */}
-          {monthlyData.weeks?.map((week, wi) => {
-            const mTherapists = monthlyData.therapists || [];
-            const mTimeSlots = monthlyData.timeSlots || [];
-            const totalColsM = week.dates.length * mTherapists.length;
+          {!monthlyData && !loading && (
+            <div className="bg-white rounded-lg border p-8 text-center text-slate-400">
+              데이터를 불러올 수 없습니다. API 서버 연결을 확인하세요.
+            </div>
+          )}
+
+          {monthlyData && (() => {
+            const dayCounts: Record<string, number> = {};
+            if (monthlyData.grid) {
+              for (const tId of Object.keys(monthlyData.grid)) {
+                for (const dateStr of Object.keys(monthlyData.grid[tId] || {})) {
+                  const cnt = Object.keys(monthlyData.grid[tId][dateStr] || {}).length;
+                  dayCounts[dateStr] = (dayCounts[dateStr] || 0) + cnt;
+                }
+              }
+            }
+            const calDays = getMonthCalendarDays(monthYear, monthNum);
+            const today = new Date().toISOString().slice(0, 10);
 
             return (
-              <div key={wi} className="bg-white rounded-lg border overflow-x-auto">
-                <div className="min-w-[800px]">
-                  {/* Week Header */}
-                  <div className="grid border-b-2 border-slate-300" style={{ gridTemplateColumns: `46px repeat(${totalColsM}, minmax(56px, 1fr))` }}>
-                    <div className="px-1 py-1.5 text-[10px] font-semibold text-slate-500 border-r border-slate-200 flex items-center justify-center bg-slate-50">
-                      시간
-                    </div>
-                    {week.dates.map((date, idx) => {
-                      const dayLabel = DAY_LABELS[idx];
-                      const isSat = dayLabel === '토';
-                      const dd = new Date(date + 'T00:00:00');
-                      const isToday = date === new Date().toISOString().slice(0, 10);
-
-                      return (
-                        <div
-                          key={date}
-                          className={`text-center border-r border-slate-200 last:border-r-0 ${isSat ? 'bg-blue-50/50' : ''}`}
-                          style={{ gridColumn: `span ${mTherapists.length}` }}
-                        >
-                          <div className={`py-1 text-[10px] font-semibold border-b border-slate-200 ${isToday ? 'bg-blue-100 text-blue-700' : 'text-slate-700'}`}>
-                            {dd.getMonth() + 1}/{dd.getDate()} {dayLabel}
-                          </div>
-                          <div className="grid" style={{ gridTemplateColumns: `repeat(${mTherapists.length}, 1fr)` }}>
-                            {mTherapists.map((t) => (
-                              <div key={t.id} className="text-[10px] py-0.5 text-slate-500 border-r border-slate-100 last:border-r-0 truncate px-0.5">
-                                {t.name.length > 2 ? t.name.slice(0, 2) : t.name}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Time Rows */}
-                  {mTimeSlots.map((ts) => (
-                    <div
-                      key={ts}
-                      className="grid border-b border-slate-100 hover:bg-slate-50/50"
-                      style={{ gridTemplateColumns: `46px repeat(${totalColsM}, minmax(56px, 1fr))` }}
-                    >
-                      <div className="px-1 py-0.5 text-[10px] font-mono text-slate-500 border-r border-slate-200 flex items-center justify-center">
-                        {ts}
-                      </div>
-                      {week.dates.map((date, idx) => {
-                        const isSat = DAY_LABELS[idx] === '토';
-
-                        return mTherapists.map((t) => {
-                          const slot = monthlyData.grid?.[t.id]?.[date]?.[ts] || null;
-
-                          return (
-                            <div
-                              key={`${t.id}-${date}-${ts}`}
-                              onClick={() => { setWeekDate(date); setViewMode('weekly'); }}
-                              className={`px-0.5 py-0.5 border-r border-slate-100 last:border-r-0 cursor-pointer transition-colors min-h-[28px] ${
-                                slot
-                                  ? `${PATIENT_TYPE_STYLES[slot.patientType] || ''} ${STATUS_STYLES[slot.status] || ''} border`
-                                  : 'hover:bg-blue-50/50'
-                              } ${isSat ? 'bg-blue-50/30' : ''}`}
-                            >
-                              {slot && (
-                                <div className="text-[9px] leading-tight">
-                                  <div className="font-medium text-slate-800 truncate">{slot.patientName}</div>
-                                  <div className="flex items-center gap-0.5 flex-wrap">
-                                    {slot.treatmentCodes?.map((code: string) => {
-                                      const tc = TREATMENT_CODES.find((c) => c.code === code);
-                                      return (
-                                        <span key={code} className={`px-0.5 rounded text-[8px] leading-tight ${tc?.color || 'bg-slate-100 text-slate-500'}`}>
-                                          {code}
-                                        </span>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        });
-                      })}
+              <div className="bg-white rounded-lg border">
+                <div className="grid grid-cols-7 border-b">
+                  {['일', '월', '화', '수', '목', '금', '토'].map((d, i) => (
+                    <div key={d} className={`py-2 text-center text-xs font-semibold ${i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : 'text-slate-600'}`}>
+                      {d}
                     </div>
                   ))}
+                </div>
+                <div className="grid grid-cols-7">
+                  {calDays.map((day, i) => {
+                    if (!day) return <div key={`e-${i}`} className="p-2 min-h-[64px] border-b border-r border-slate-100 bg-slate-50/50" />;
+                    const dd = new Date(day + 'T00:00:00');
+                    const isToday = day === today;
+                    const count = dayCounts[day] || 0;
+                    const isSun = dd.getDay() === 0;
+                    const isSat = dd.getDay() === 6;
 
-                  {/* Remarks Row */}
-                  <div className="border-t-2 border-slate-300 bg-slate-50">
-                    <div className="grid" style={{ gridTemplateColumns: '46px 1fr' }}>
-                      <div className="px-1 py-1.5 text-[10px] font-semibold text-slate-500 border-r border-slate-200 flex items-center">
-                        비고
+                    return (
+                      <div
+                        key={day}
+                        onClick={() => navigateToWeek(day)}
+                        className={`p-2 min-h-[64px] border-b border-r border-slate-100 cursor-pointer hover:bg-blue-50/50 transition ${isToday ? 'bg-blue-50' : ''}`}
+                      >
+                        <div className={`text-xs font-semibold ${isToday ? 'text-blue-600' : isSun ? 'text-red-500' : isSat ? 'text-blue-500' : 'text-slate-700'}`}>
+                          {dd.getDate()}
+                        </div>
+                        {count > 0 && (
+                          <div className="mt-1 text-center">
+                            <span className="inline-block bg-blue-100 text-blue-700 text-xs font-bold px-2 py-0.5 rounded-full">
+                              {count}
+                            </span>
+                          </div>
+                        )}
                       </div>
-                      <div className="grid" style={{ gridTemplateColumns: `repeat(${week.dates.length}, 1fr)` }}>
-                        {week.dates.map((date) => {
-                          const remark = monthlyData.remarks?.find((r) => r.date === date);
-                          return (
-                            <div key={date} className="px-1 py-1 border-r border-slate-200 last:border-r-0 min-h-[24px]">
-                              <div className="text-[10px] text-slate-600">{remark?.content || ''}</div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
+                    );
+                  })}
                 </div>
               </div>
             );
-          })}
+          })()}
         </>
+      )}
+
+      {/* Weekly View - Error */}
+      {viewMode === 'weekly' && !data && !loading && (
+        <div className="bg-white rounded-lg border p-8 text-center text-slate-400">
+          데이터를 불러올 수 없습니다. API 서버 연결을 확인하세요.
+        </div>
       )}
 
       {/* Weekly View */}
@@ -873,7 +829,7 @@ export default function ManualTherapyPage() {
                   <div className="grid" style={{ gridTemplateColumns: `repeat(${therapists.length}, 1fr)` }}>
                     {therapists.map((t) => (
                       <div key={t.id} className="text-[10px] py-0.5 text-slate-500 border-r border-slate-100 last:border-r-0 truncate px-0.5">
-                        {t.name.length > 2 ? t.name.slice(0, 2) : t.name}
+                        {t.name}
                       </div>
                     ))}
                   </div>
