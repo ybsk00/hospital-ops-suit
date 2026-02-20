@@ -1070,8 +1070,8 @@ model RfScheduleSlot {
   id            String            @id @default(uuid())
   roomId        String
   room          RfTreatmentRoom   @relation(fields: [roomId], references: [id])
-  patientId     String
-  patient       Patient           @relation(fields: [patientId], references: [id])
+  patientId     String?
+  patient       Patient?          @relation(fields: [patientId], references: [id])
   doctorCode    String
   date          DateTime          @db.Date
   startTime     String

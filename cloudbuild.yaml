@@ -55,6 +55,10 @@ steps:
       - '1'
       - '--timeout'
       - '300'
+      - '--set-env-vars'
+      - 'TZ=Asia/Seoul,GEMINI_CHAT_MODEL=gemini-2.5-flash,JWT_ACCESS_EXPIRES=4h,JWT_REFRESH_EXPIRES=30d,CORS_ORIGIN=https://hospital-ops-web-788517765486.asia-northeast3.run.app'
+      - '--set-secrets'
+      - 'DATABASE_URL=hospital-ops-database-url:latest,DIRECT_URL=hospital-ops-database-url:latest,JWT_SECRET=hospital-ops-jwt-secret:latest,JWT_REFRESH_SECRET=hospital-ops-jwt-refresh-secret:latest,GEMINI_API_KEY=hospital-ops-gemini-api-key:latest'
     waitFor: ['push-api']
 
   # ============================================================
@@ -83,7 +87,7 @@ steps:
       - '--timeout'
       - '300'
       - '--set-env-vars'
-      - 'NEXT_PUBLIC_API_URL=https://hospital-ops-api-783253438610.asia-northeast3.run.app'
+      - 'NEXT_PUBLIC_API_URL=https://hospital-ops-api-788517765486.asia-northeast3.run.app'
     waitFor: ['push-web']
 
 images:

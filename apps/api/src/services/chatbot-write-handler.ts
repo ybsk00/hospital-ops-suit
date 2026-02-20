@@ -889,6 +889,7 @@ export async function confirmPendingAction(
             date: new Date(payload.date),
             timeSlot: payload.time,
             treatmentCodes: payload.treatmentCodes || [],
+            sessionMarker: payload.sessionMarker || null,
             patientType: payload.patientType || 'INPATIENT',
             source: 'CHATBOT',
             chatSessionId: pending.sessionId,
@@ -902,6 +903,7 @@ export async function confirmPendingAction(
           type: 'manualTherapy',
           id: slot.id,
           patientId: payload.patientId,
+          patientName: payload.patientName,
           date: payload.date,
           time: payload.time,
         });
@@ -948,6 +950,7 @@ export async function confirmPendingAction(
           type: 'rfTherapy',
           id: rfSlot.id,
           patientId: payload.patientId,
+          patientName: payload.patientName,
           date: payload.date,
           time: payload.time,
         });
@@ -1034,19 +1037,24 @@ async function handleCreateManualTherapySlot(
   user: any,
   sessionId: string,
 ): Promise<WriteHandlerResult> {
+  // 환자 매칭 (DB에 없으면 이름만으로 진행)
+  let patientId: string | null = null;
+  let patientName = args.patientName || '';
+  let patientEmrId: string | null = null;
+
   const patientResult = await matchPatient(args.patientName);
-  if (patientResult.status === 'notFound') {
-    return { type: 'error', message: `"${patientResult.searchTerm}" 환자를 찾을 수 없습니다.` };
-  }
-  if (patientResult.status === 'multiple') {
+  if (patientResult.status === 'found') {
+    patientId = patientResult.patient.id;
+    patientName = patientResult.patient.name;
+    patientEmrId = patientResult.patient.emrPatientId;
+  } else if (patientResult.status === 'multiple') {
     return {
       type: 'disambiguation',
       message: `"${args.patientName}" 이름의 환자가 ${patientResult.patients.length}명 있습니다. 선택해 주세요.`,
       patients: patientResult.patients.map(p => ({ id: p.id, name: p.name, emrId: p.emrPatientId, dob: p.dob })),
     };
   }
-
-  const patient = patientResult.patient;
+  // notFound → patientId=null, patientName만 사용하여 진행
 
   // 치료사 매칭 또는 자동배정
   let therapist: { id: string; name: string } | null = null;
@@ -1065,28 +1073,33 @@ async function handleCreateManualTherapySlot(
     }
   }
 
-  // 해당 환자 동시간 도수 예약 충돌 검사
-  const existingSlot = await prisma.manualTherapySlot.findFirst({
-    where: {
-      patientId: patient.id,
-      date: new Date(args.date),
-      timeSlot: args.time,
-      deletedAt: null,
-      status: { not: 'CANCELLED' },
-    },
-  });
+  // 해당 환자 동시간 도수 예약 충돌 검사 (DB 환자 또는 이름 기반)
+  const conflictWhere: any = {
+    date: new Date(args.date),
+    timeSlot: args.time,
+    deletedAt: null,
+    status: { not: 'CANCELLED' },
+  };
+  if (patientId) {
+    conflictWhere.patientId = patientId;
+  } else {
+    conflictWhere.patientName = patientName;
+  }
+
+  const existingSlot = await prisma.manualTherapySlot.findFirst({ where: conflictWhere });
   if (existingSlot) {
-    return { type: 'error', message: `${patient.name} 환자가 ${args.date} ${args.time}에 이미 도수 예약이 있습니다.` };
+    return { type: 'error', message: `${patientName} 환자가 ${args.date} ${args.time}에 이미 도수 예약이 있습니다.` };
   }
 
   const displayData = {
     actionLabel: '도수치료 예약',
-    patientName: patient.name,
-    patientEmrId: patient.emrPatientId,
+    patientName,
+    patientEmrId,
     therapistName: therapist.name,
     date: args.date,
     time: args.time,
     treatmentCodes: args.treatmentCodes || [],
+    sessionMarker: args.sessionMarker || null,
     patientType: args.patientType || 'INPATIENT',
   };
 
@@ -1095,13 +1108,14 @@ async function handleCreateManualTherapySlot(
       sessionId,
       actionType: 'createManualTherapySlot',
       payload: {
-        patientId: patient.id,
+        patientId,
         therapistId: therapist.id,
         date: args.date,
         time: args.time,
         treatmentCodes: args.treatmentCodes || [],
+        sessionMarker: args.sessionMarker || null,
         patientType: args.patientType || 'INPATIENT',
-        patientName: patient.name,
+        patientName,
       },
       displayData,
       status: 'PENDING',
@@ -1112,7 +1126,7 @@ async function handleCreateManualTherapySlot(
 
   return {
     type: 'confirm',
-    message: `${patient.name} 환자를 ${args.date} ${args.time}에 도수치료(${therapist.name}) 예약합니다. 확인해 주세요.`,
+    message: `${patientName} 환자를 ${args.date} ${args.time}에 도수치료(${therapist.name}) 예약합니다. 확인해 주세요.`,
     pendingId: pending.id,
     displayData,
   };
@@ -1127,11 +1141,14 @@ async function handleCancelManualTherapySlot(
   user: any,
   sessionId: string,
 ): Promise<WriteHandlerResult> {
+  let patientId: string | null = null;
+  let patientName = args.patientName || '';
+
   const patientResult = await matchPatient(args.patientName);
-  if (patientResult.status === 'notFound') {
-    return { type: 'error', message: `"${patientResult.searchTerm}" 환자를 찾을 수 없습니다.` };
-  }
-  if (patientResult.status === 'multiple') {
+  if (patientResult.status === 'found') {
+    patientId = patientResult.patient.id;
+    patientName = patientResult.patient.name;
+  } else if (patientResult.status === 'multiple') {
     return {
       type: 'disambiguation',
       message: `"${args.patientName}" 이름의 환자가 여러 명입니다. 선택해 주세요.`,
@@ -1139,13 +1156,16 @@ async function handleCancelManualTherapySlot(
     };
   }
 
-  const patient = patientResult.patient;
-
+  // DB 환자 또는 이름 기반으로 슬롯 검색
   const where: any = {
-    patientId: patient.id,
     deletedAt: null,
     status: { not: 'CANCELLED' },
   };
+  if (patientId) {
+    where.patientId = patientId;
+  } else {
+    where.patientName = patientName;
+  }
   if (args.date) where.date = new Date(args.date);
   if (args.time) where.timeSlot = args.time;
 
@@ -1156,12 +1176,12 @@ async function handleCancelManualTherapySlot(
   });
 
   if (!slot) {
-    return { type: 'error', message: `${patient.name} 환자의 도수 예약을 찾을 수 없습니다.` };
+    return { type: 'error', message: `${patientName} 환자의 도수 예약을 찾을 수 없습니다.` };
   }
 
   const displayData = {
     actionLabel: '도수치료 취소',
-    patientName: patient.name,
+    patientName: slot.patientName || patientName,
     therapistName: slot.therapist.name,
     date: slot.date.toISOString().slice(0, 10),
     time: slot.timeSlot,
@@ -1182,7 +1202,7 @@ async function handleCancelManualTherapySlot(
 
   return {
     type: 'confirm',
-    message: `${patient.name} 환자의 ${displayData.date} ${displayData.time} 도수치료를 취소합니다. 확인해 주세요.`,
+    message: `${displayData.patientName} 환자의 ${displayData.date} ${displayData.time} 도수치료를 취소합니다. 확인해 주세요.`,
     pendingId: pending.id,
     displayData,
   };
@@ -1197,11 +1217,17 @@ async function handleCreateRfScheduleSlot(
   user: any,
   sessionId: string,
 ): Promise<WriteHandlerResult> {
+  // 환자 매칭 (DB에 없으면 이름만으로 진행)
+  let patientId: string | null = null;
+  let patientName = args.patientName || '';
+  let patientEmrId: string | null = null;
+
   const patientResult = await matchPatient(args.patientName);
-  if (patientResult.status === 'notFound') {
-    return { type: 'error', message: `"${patientResult.searchTerm}" 환자를 찾을 수 없습니다.` };
-  }
-  if (patientResult.status === 'multiple') {
+  if (patientResult.status === 'found') {
+    patientId = patientResult.patient.id;
+    patientName = patientResult.patient.name;
+    patientEmrId = patientResult.patient.emrPatientId;
+  } else if (patientResult.status === 'multiple') {
     return {
       type: 'disambiguation',
       message: `"${args.patientName}" 이름의 환자가 여러 명입니다. 선택해 주세요.`,
@@ -1209,7 +1235,6 @@ async function handleCreateRfScheduleSlot(
     };
   }
 
-  const patient = patientResult.patient;
   const duration = args.duration || 120;
   const doctorCode = args.doctorCode || 'C';
 
@@ -1231,22 +1256,26 @@ async function handleCreateRfScheduleSlot(
   }
 
   // 같은 환자 같은 날 중복 검사
-  const existingSlot = await prisma.rfScheduleSlot.findFirst({
-    where: {
-      patientId: patient.id,
-      date: new Date(args.date),
-      deletedAt: null,
-      status: { not: 'CANCELLED' },
-    },
-  });
+  const conflictWhere: any = {
+    date: new Date(args.date),
+    deletedAt: null,
+    status: { not: 'CANCELLED' },
+  };
+  if (patientId) {
+    conflictWhere.patientId = patientId;
+  } else {
+    conflictWhere.patientName = patientName;
+  }
+
+  const existingSlot = await prisma.rfScheduleSlot.findFirst({ where: conflictWhere });
   if (existingSlot) {
-    return { type: 'error', message: `${patient.name} 환자가 ${args.date}에 이미 고주파 예약이 있습니다.` };
+    return { type: 'error', message: `${patientName} 환자가 ${args.date}에 이미 고주파 예약이 있습니다.` };
   }
 
   const displayData = {
     actionLabel: '고주파 예약',
-    patientName: patient.name,
-    patientEmrId: patient.emrPatientId,
+    patientName,
+    patientEmrId,
     roomName: room.name + '번',
     doctorCode,
     date: args.date,
@@ -1260,14 +1289,14 @@ async function handleCreateRfScheduleSlot(
       sessionId,
       actionType: 'createRfScheduleSlot',
       payload: {
-        patientId: patient.id,
+        patientId,
         roomId: room.id,
         doctorCode,
         date: args.date,
         time: args.time,
         duration,
         patientType: args.patientType || 'INPATIENT',
-        patientName: patient.name,
+        patientName,
       },
       displayData,
       status: 'PENDING',
@@ -1278,7 +1307,7 @@ async function handleCreateRfScheduleSlot(
 
   return {
     type: 'confirm',
-    message: `${patient.name} 환자를 ${args.date} ${args.time}에 고주파(${room.name}번, ${duration}분, ${doctorCode}) 예약합니다. 확인해 주세요.`,
+    message: `${patientName} 환자를 ${args.date} ${args.time}에 고주파(${room.name}번, ${duration}분, ${doctorCode}) 예약합니다. 확인해 주세요.`,
     pendingId: pending.id,
     displayData,
   };
@@ -1293,11 +1322,14 @@ async function handleCancelRfScheduleSlot(
   user: any,
   sessionId: string,
 ): Promise<WriteHandlerResult> {
+  let patientId: string | null = null;
+  let patientName = args.patientName || '';
+
   const patientResult = await matchPatient(args.patientName);
-  if (patientResult.status === 'notFound') {
-    return { type: 'error', message: `"${patientResult.searchTerm}" 환자를 찾을 수 없습니다.` };
-  }
-  if (patientResult.status === 'multiple') {
+  if (patientResult.status === 'found') {
+    patientId = patientResult.patient.id;
+    patientName = patientResult.patient.name;
+  } else if (patientResult.status === 'multiple') {
     return {
       type: 'disambiguation',
       message: `"${args.patientName}" 이름의 환자가 여러 명입니다. 선택해 주세요.`,
@@ -1305,13 +1337,15 @@ async function handleCancelRfScheduleSlot(
     };
   }
 
-  const patient = patientResult.patient;
-
   const where: any = {
-    patientId: patient.id,
     deletedAt: null,
     status: { not: 'CANCELLED' },
   };
+  if (patientId) {
+    where.patientId = patientId;
+  } else {
+    where.patientName = patientName;
+  }
   if (args.date) where.date = new Date(args.date);
 
   const slot = await prisma.rfScheduleSlot.findFirst({
@@ -1321,12 +1355,12 @@ async function handleCancelRfScheduleSlot(
   });
 
   if (!slot) {
-    return { type: 'error', message: `${patient.name} 환자의 고주파 예약을 찾을 수 없습니다.` };
+    return { type: 'error', message: `${patientName} 환자의 고주파 예약을 찾을 수 없습니다.` };
   }
 
   const displayData = {
     actionLabel: '고주파 취소',
-    patientName: patient.name,
+    patientName: slot.patientName || patientName,
     roomName: slot.room.name + '번',
     date: slot.date.toISOString().slice(0, 10),
     time: slot.startTime,
@@ -1347,7 +1381,7 @@ async function handleCancelRfScheduleSlot(
 
   return {
     type: 'confirm',
-    message: `${patient.name} 환자의 ${displayData.date} ${displayData.time} 고주파를 취소합니다. 확인해 주세요.`,
+    message: `${displayData.patientName} 환자의 ${displayData.date} ${displayData.time} 고주파를 취소합니다. 확인해 주세요.`,
     pendingId: pending.id,
     displayData,
   };

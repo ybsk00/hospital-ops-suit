@@ -248,7 +248,7 @@ router.post(
     const slot = await prisma.rfScheduleSlot.create({
       data: {
         roomId: body.roomId,
-        patientId: body.patientId || null as any,
+        patientId: body.patientId || null,
         patientName: body.patientName || null,
         chartNumber: body.chartNumber || null,
         doctorCode: body.doctorCode,
