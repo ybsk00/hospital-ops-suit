@@ -663,11 +663,11 @@ router.post(
     const now = new Date();
 
     const updated = await prisma.$transaction(async (tx) => {
-      // 1) 베드 → CLEANING, BedAssignment 종료
+      // 1) 베드 → EMPTY, BedAssignment 종료
       if (admission.currentBedId) {
         await tx.bed.update({
           where: { id: admission.currentBedId },
-          data: { status: 'CLEANING', version: { increment: 1 } },
+          data: { status: 'EMPTY', version: { increment: 1 } },
         });
 
         await tx.bedAssignment.updateMany({
