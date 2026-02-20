@@ -236,7 +236,7 @@ router.get(
   }),
 );
 
-// ─── GET /api/rf-schedule/monthly ── 월간 집계 조회 ───
+// ─── GET /api/rf-schedule/monthly ── 월간 전체 조회 (주간 그리드 포함) ───
 router.get(
   '/monthly',
   requireAuth,
@@ -252,31 +252,95 @@ router.get(
       orderBy: { displayOrder: 'asc' },
     });
 
+    // 전체 슬롯 데이터 (환자 이름 포함)
     const slots = await prisma.rfScheduleSlot.findMany({
       where: {
         deletedAt: null,
         date: { gte: startDate, lte: endDate },
       },
-      select: { date: true, roomId: true, status: true },
+      include: {
+        patient: { select: { id: true, name: true, emrPatientId: true } },
+      },
+      orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
     });
 
-    const days: Record<string, any> = {};
+    // 직원 메모
+    const staffNotes = await prisma.staffDayNote.findMany({
+      where: {
+        noteType: 'RF_STAFF_NOTE',
+        date: { gte: startDate, lte: endDate },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    // 그리드 구성: roomId → date → timeSlot → slotData/OCCUPIED/BUFFER
+    const grid: Record<string, Record<string, Record<string, any>>> = {};
+    for (const room of rooms) {
+      grid[room.id] = {};
+    }
+
     for (const slot of slots) {
       const dateStr = slot.date.toISOString().slice(0, 10);
-      if (!days[dateStr]) {
-        days[dateStr] = {
-          total: 0,
-          byStatus: { BOOKED: 0, COMPLETED: 0, NO_SHOW: 0, CANCELLED: 0 },
-          byRoom: {} as Record<string, { count: number }>,
-        };
+      if (!grid[slot.roomId]) continue;
+      if (!grid[slot.roomId][dateStr]) {
+        grid[slot.roomId][dateStr] = {};
       }
-      const day = days[dateStr];
-      day.total++;
-      if (day.byStatus[slot.status] !== undefined) day.byStatus[slot.status]++;
-      if (!day.byRoom[slot.roomId]) {
-        day.byRoom[slot.roomId] = { count: 0 };
+
+      const startMin = timeToMinutes(slot.startTime);
+      const endMin = startMin + slot.duration;
+
+      grid[slot.roomId][dateStr][slot.startTime] = {
+        id: slot.id,
+        patientId: slot.patientId,
+        patientName: slot.patient?.name || slot.patientName || '',
+        chartNumber: slot.chartNumber || slot.patient?.emrPatientId || '',
+        doctorCode: slot.doctorCode,
+        duration: slot.duration,
+        patientType: slot.patientType,
+        status: slot.status,
+        notes: slot.notes,
+      };
+
+      // OCCUPIED 표시
+      for (let m = startMin + 30; m < endMin; m += 30) {
+        const ts = minutesToTime(m);
+        if (TIME_SLOTS.includes(ts)) {
+          if (!grid[slot.roomId][dateStr]) grid[slot.roomId][dateStr] = {};
+          grid[slot.roomId][dateStr][ts] = 'OCCUPIED';
+        }
       }
-      day.byRoom[slot.roomId].count++;
+
+      // BUFFER 표시
+      const bufferEnd = endMin + 30;
+      for (let m = endMin; m < bufferEnd; m += 30) {
+        const ts = minutesToTime(m);
+        if (TIME_SLOTS.includes(ts) && !grid[slot.roomId][dateStr]?.[ts]) {
+          if (!grid[slot.roomId][dateStr]) grid[slot.roomId][dateStr] = {};
+          grid[slot.roomId][dateStr][ts] = 'BUFFER';
+        }
+      }
+    }
+
+    // 주차 그룹 (월~토)
+    const weeks: { start: string; end: string; dates: string[] }[] = [];
+    const lastOfMonth = new Date(year, month, 0);
+    const cursor = new Date(year, month - 1, 1);
+    const dow = cursor.getDay();
+    cursor.setDate(cursor.getDate() - (dow === 0 ? 6 : dow - 1));
+
+    while (cursor <= lastOfMonth) {
+      const weekDates: string[] = [];
+      for (let i = 0; i < 6; i++) {
+        const d = new Date(cursor);
+        d.setDate(cursor.getDate() + i);
+        weekDates.push(d.toISOString().slice(0, 10));
+      }
+      weeks.push({
+        start: weekDates[0],
+        end: weekDates[weekDates.length - 1],
+        dates: weekDates,
+      });
+      cursor.setDate(cursor.getDate() + 7);
     }
 
     const stats = {
@@ -292,7 +356,14 @@ router.get(
         year,
         month,
         rooms: rooms.map(r => ({ id: r.id, name: r.name, displayOrder: r.displayOrder })),
-        days,
+        timeSlots: TIME_SLOTS,
+        weeks,
+        grid,
+        staffNotes: staffNotes.map(n => ({
+          id: n.id,
+          date: n.date.toISOString().slice(0, 10),
+          content: n.content,
+        })),
         stats,
       },
     });

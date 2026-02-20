@@ -456,17 +456,23 @@ interface MonthlyRfData {
   year: number;
   month: number;
   rooms: Room[];
-  days: Record<string, {
-    total: number;
-    byStatus: Record<string, number>;
-    byRoom: Record<string, { count: number }>;
-  }>;
+  timeSlots: string[];
+  weeks: { start: string; end: string; dates: string[] }[];
+  grid: Record<string, Record<string, Record<string, SlotData | 'OCCUPIED' | 'BUFFER'>>>;
+  staffNotes: { id: string; date: string; content: string }[];
   stats: { totalBooked: number; totalCompleted: number; noShows: number; cancelled: number };
 }
 
 type ViewMode = 'daily' | 'weekly' | 'monthly';
 
 const DAY_LABELS = ['월', '화', '수', '목', '금', '토'];
+
+const TIME_SLOTS_DEFAULT = [
+  '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+  '12:00', '12:30', '13:00', '13:30',
+  '14:00', '14:30', '15:00', '15:30', '16:00', '16:30',
+  '17:00', '17:30', '18:00', '18:30',
+];
 
 function shiftWeek(dateStr: string, offset: number): string {
   const d = new Date(dateStr + 'T00:00:00');
@@ -595,7 +601,8 @@ export default function RfSchedulePage() {
     return dates;
   };
 
-  if (loading && !data && !weeklyData && !monthlyData) {
+  const isCurrentViewLoading = (viewMode === 'daily' && !data) || (viewMode === 'weekly' && !weeklyData) || (viewMode === 'monthly' && !monthlyData);
+  if (loading && isCurrentViewLoading) {
     return <div className="flex items-center justify-center h-64"><div className="text-slate-400">로딩 중...</div></div>;
   }
 
@@ -606,32 +613,31 @@ export default function RfSchedulePage() {
     <div className="space-y-4">
       {/* Header + ViewMode Tabs */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">고주파예약 현황</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            {viewMode === 'daily' ? '일간' : viewMode === 'weekly' ? '주간' : '월간'} 고주파(RF) 치료 예약 관리
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* ViewMode Tabs */}
-          <div className="flex rounded-lg border overflow-hidden mr-2">
+        <div className="flex items-center gap-4">
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">고주파예약 현황</h1>
+            <p className="text-sm text-slate-500 mt-0.5">
+              {viewMode === 'daily' ? '일간' : viewMode === 'weekly' ? '주간' : '월간'} 고주파(RF) 치료 예약 관리
+            </p>
+          </div>
+          <div className="flex bg-slate-100 rounded-lg p-0.5">
             {(['daily', 'weekly', 'monthly'] as ViewMode[]).map((m) => (
               <button
                 key={m}
                 onClick={() => setViewMode(m)}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === m ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                className={`px-3 py-1 text-sm rounded-md transition ${viewMode === m ? 'bg-white text-blue-600 shadow-sm font-medium' : 'text-slate-500 hover:text-slate-700'}`}
               >
                 {m === 'daily' ? '일간' : m === 'weekly' ? '주간' : '월간'}
               </button>
             ))}
           </div>
-          {viewMode === 'daily' && (
-            <div className="flex items-center gap-1.5 text-xs text-slate-500 mr-2">
-              <span className="inline-block w-3 h-3 rounded bg-blue-100 border border-blue-300" /> 예약
-              <span className="inline-block w-3 h-3 rounded bg-slate-200 border border-slate-300 ml-1" /> 점유
-              <span className="inline-block w-3 h-3 rounded-sm ml-1" style={{ background: 'repeating-linear-gradient(45deg, #e2e8f0, #e2e8f0 2px, transparent 2px, transparent 6px)', border: '1px solid #cbd5e1' }} /> 버퍼
-            </div>
-          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 text-xs text-slate-500 mr-2">
+            <span className="inline-block w-3 h-3 rounded bg-blue-100 border border-blue-300" /> 예약
+            <span className="inline-block w-3 h-3 rounded bg-slate-200 border border-slate-300 ml-1" /> 점유
+            <span className="inline-block w-3 h-3 rounded-sm ml-1" style={{ background: 'repeating-linear-gradient(45deg, #e2e8f0, #e2e8f0 2px, transparent 2px, transparent 6px)', border: '1px solid #cbd5e1' }} /> 버퍼
+          </div>
           {currentStats && (
             <div className="flex items-center gap-1 text-xs bg-slate-100 rounded-lg px-3 py-1.5">
               <span>예약 {currentStats.totalBooked}</span>
@@ -869,66 +875,128 @@ export default function RfSchedulePage() {
             </button>
           </div>
 
-          {/* Monthly Calendar */}
-          <div className="bg-white rounded-lg border">
-            {/* Weekday Header */}
-            <div className="grid grid-cols-7 border-b-2 border-slate-300">
-              {['일', '월', '화', '수', '목', '금', '토'].map((dl, i) => (
-                <div key={dl} className={`px-2 py-2 text-center text-xs font-semibold ${i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : 'text-slate-600'}`}>
-                  {dl}
-                </div>
-              ))}
-            </div>
-
-            {/* Calendar Grid */}
-            <div className="grid grid-cols-7">
-              {getMonthCalendarDays(monthYear, monthNum).map((d, idx) => {
-                if (!d) {
-                  return <div key={`e-${idx}`} className="min-h-[80px] border-b border-r border-slate-100 bg-slate-50/30" />;
-                }
-                const dayData = monthlyData.days[d];
-                const dayNum = parseInt(d.slice(8), 10);
-                const dow = new Date(d + 'T00:00:00').getDay();
-                const isToday = d === new Date().toISOString().slice(0, 10);
-
-                return (
+          {/* Monthly - Stacked Weekly Grids */}
+          {monthlyData.weeks.map((week, wi) => {
+            const weekRooms = monthlyData.rooms;
+            return (
+              <div key={wi} className="bg-white rounded-lg border overflow-x-auto">
+                <div style={{ minWidth: `${70 + week.dates.length * weekRooms.length * 48}px` }}>
+                  {/* Week Header: Days */}
                   <div
-                    key={d}
-                    onClick={() => navigateToDay(d)}
-                    className={`min-h-[80px] border-b border-r border-slate-100 p-1.5 cursor-pointer hover:bg-blue-50/40 transition ${isToday ? 'bg-blue-50/60' : ''}`}
+                    className="grid border-b-2 border-slate-300"
+                    style={{ gridTemplateColumns: `70px repeat(${week.dates.length}, 1fr)` }}
                   >
-                    <div className={`text-xs font-medium mb-1 ${dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-slate-700'} ${isToday ? 'font-bold' : ''}`}>
-                      {dayNum}
+                    <div className="px-2 py-2 text-xs font-semibold text-slate-500 border-r border-slate-200 flex items-center justify-center bg-slate-50">
+                      시간
                     </div>
-                    {dayData && dayData.total > 0 && (
-                      <div className="space-y-0.5">
-                        <div className="text-[11px] font-semibold text-blue-600">{dayData.total}건</div>
-                        {dayData.byStatus.COMPLETED > 0 && (
-                          <div className="text-[10px] text-green-600">완료 {dayData.byStatus.COMPLETED}</div>
-                        )}
-                        {dayData.byStatus.NO_SHOW > 0 && (
-                          <div className="text-[10px] text-yellow-600">노쇼 {dayData.byStatus.NO_SHOW}</div>
-                        )}
-                        {/* Top rooms usage */}
-                        {(() => {
-                          const usedRooms = Object.entries(dayData.byRoom)
-                            .filter(([, v]) => v.count > 0)
-                            .sort((a, b) => b[1].count - a[1].count)
-                            .slice(0, 3);
-                          if (usedRooms.length === 0) return null;
-                          const roomNames = usedRooms.map(([rId]) => {
-                            const r = monthlyData.rooms.find((rm) => rm.id === rId);
-                            return r ? `${r.name}번(${dayData.byRoom[rId].count})` : null;
-                          }).filter(Boolean);
-                          return <div className="text-[9px] text-slate-400 truncate">{roomNames.join(' ')}</div>;
-                        })()}
-                      </div>
-                    )}
+                    {week.dates.map((d, di) => {
+                      const dd = new Date(d + 'T00:00:00');
+                      const isToday = d === new Date().toISOString().slice(0, 10);
+                      return (
+                        <div
+                          key={d}
+                          onClick={() => navigateToDay(d)}
+                          className={`text-center border-r border-slate-200 last:border-r-0 cursor-pointer hover:bg-blue-50 transition ${isToday ? 'bg-blue-100' : ''}`}
+                        >
+                          <div className="py-1.5 text-xs font-semibold border-b border-slate-200">
+                            <span className={`${isToday ? 'text-blue-700' : 'text-slate-700'}`}>
+                              {String(dd.getMonth() + 1).padStart(2, '0')}.{String(dd.getDate()).padStart(2, '0')} ({DAY_LABELS[di]})
+                            </span>
+                          </div>
+                          {/* Sub-columns: Room numbers */}
+                          <div className="grid" style={{ gridTemplateColumns: `repeat(${weekRooms.length}, 1fr)` }}>
+                            {weekRooms.map((room) => (
+                              <div key={room.id} className="text-[10px] py-0.5 text-slate-500 border-r border-slate-100 last:border-r-0 truncate">
+                                {room.name}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
-          </div>
+
+                  {/* Time Rows */}
+                  {(monthlyData.timeSlots || TIME_SLOTS_DEFAULT).map((ts: string) => (
+                    <div
+                      key={ts}
+                      className="grid border-b border-slate-100"
+                      style={{ gridTemplateColumns: `70px repeat(${week.dates.length}, 1fr)` }}
+                    >
+                      <div className="px-1 py-0.5 text-[10px] font-mono text-slate-500 border-r border-slate-200 flex items-center justify-center">
+                        {ts}
+                      </div>
+                      {week.dates.map((d) => (
+                        <div
+                          key={d}
+                          className="grid border-r border-slate-100 last:border-r-0"
+                          style={{ gridTemplateColumns: `repeat(${weekRooms.length}, 1fr)` }}
+                        >
+                          {weekRooms.map((room) => {
+                            const cell = monthlyData.grid?.[room.id]?.[d]?.[ts];
+
+                            if (cell === 'OCCUPIED') {
+                              return <div key={room.id} className="bg-blue-50/60 min-h-[28px] border-r border-slate-50 last:border-r-0" />;
+                            }
+                            if (cell === 'BUFFER') {
+                              return (
+                                <div
+                                  key={room.id}
+                                  className="min-h-[28px] border-r border-slate-50 last:border-r-0"
+                                  style={{ background: 'repeating-linear-gradient(45deg, #f1f5f9, #f1f5f9 2px, transparent 2px, transparent 6px)' }}
+                                />
+                              );
+                            }
+                            if (cell && typeof cell === 'object') {
+                              const slot = cell as SlotData;
+                              const bgColor = slot.patientType === 'OUTPATIENT' ? 'bg-green-50' : slot.patientType === 'NEW' ? 'bg-purple-50' : 'bg-pink-50';
+                              return (
+                                <div
+                                  key={room.id}
+                                  onClick={() => { setDateStr(d); setViewMode('daily'); }}
+                                  className={`${bgColor} min-h-[28px] border-r border-slate-50 last:border-r-0 cursor-pointer px-0.5 py-0.5 overflow-hidden`}
+                                >
+                                  <div className="text-[9px] leading-tight">
+                                    <div className="font-medium text-slate-800 truncate">{slot.chartNumber || ''}</div>
+                                    <div className="truncate">{slot.patientName}</div>
+                                    <div className="text-slate-400">
+                                      <span className={slot.doctorCode === 'C' ? 'text-blue-600 font-bold' : 'text-green-600 font-bold'}>({slot.doctorCode})</span>
+                                      {' '}{slot.duration}분
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return <div key={room.id} className="min-h-[28px] border-r border-slate-50 last:border-r-0" />;
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+
+                  {/* Staff Notes row for this week */}
+                  <div className="border-t border-slate-300 bg-slate-50">
+                    <div
+                      className="grid"
+                      style={{ gridTemplateColumns: `70px repeat(${week.dates.length}, 1fr)` }}
+                    >
+                      <div className="px-2 py-1.5 text-xs font-semibold text-slate-500 border-r border-slate-200 flex items-center">
+                        메모
+                      </div>
+                      {week.dates.map((d) => {
+                        const note = monthlyData.staffNotes.find((n) => n.date === d);
+                        return (
+                          <div key={d} className="px-1 py-1 text-[10px] text-slate-500 border-r border-slate-100 last:border-r-0">
+                            {note?.content || ''}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </>
       )}
 

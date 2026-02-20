@@ -120,7 +120,7 @@ router.get(
   }),
 );
 
-// ─── GET /api/manual-therapy/monthly ── 월간 집계 조회 ───
+// ─── GET /api/manual-therapy/monthly ── 월간 전체 조회 (주간 그리드 포함) ───
 router.get(
   '/monthly',
   requireAuth,
@@ -136,35 +136,78 @@ router.get(
       orderBy: { name: 'asc' },
     });
 
+    // 전체 슬롯 데이터 (환자 이름 포함)
     const slots = await prisma.manualTherapySlot.findMany({
       where: {
         deletedAt: null,
         date: { gte: startDate, lte: endDate },
       },
-      select: { date: true, therapistId: true, status: true },
+      include: {
+        patient: { select: { id: true, name: true, emrPatientId: true, status: true } },
+      },
+      orderBy: [{ date: 'asc' }, { timeSlot: 'asc' }],
     });
 
-    // 날짜별 집계
-    const days: Record<string, any> = {};
-    for (const slot of slots) {
-      const dateStr = slot.date.toISOString().slice(0, 10);
-      if (!days[dateStr]) {
-        days[dateStr] = {
-          total: 0,
-          byStatus: { BOOKED: 0, COMPLETED: 0, NO_SHOW: 0, CANCELLED: 0 },
-          byTherapist: {} as Record<string, { total: number; booked: number }>,
-        };
-      }
-      const day = days[dateStr];
-      day.total++;
-      if (day.byStatus[slot.status] !== undefined) day.byStatus[slot.status]++;
-      if (!day.byTherapist[slot.therapistId]) {
-        day.byTherapist[slot.therapistId] = { total: 0, booked: 0 };
-      }
-      day.byTherapist[slot.therapistId].total++;
-      if (slot.status === 'BOOKED') day.byTherapist[slot.therapistId].booked++;
+    // 비고 메모
+    const remarks = await prisma.staffDayNote.findMany({
+      where: {
+        noteType: 'MANUAL_THERAPY_REMARK',
+        date: { gte: startDate, lte: endDate },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    // 그리드 구성: therapistId → date → timeSlot → slotData
+    const grid: Record<string, Record<string, Record<string, any>>> = {};
+    for (const t of therapists) {
+      grid[t.id] = {};
     }
 
+    for (const slot of slots) {
+      const dateStr = slot.date.toISOString().slice(0, 10);
+      if (!grid[slot.therapistId]) continue;
+      if (!grid[slot.therapistId][dateStr]) {
+        grid[slot.therapistId][dateStr] = {};
+      }
+      grid[slot.therapistId][dateStr][slot.timeSlot] = {
+        id: slot.id,
+        patientId: slot.patientId,
+        patientName: slot.patient?.name || slot.patientName || '',
+        emrPatientId: slot.patient?.emrPatientId || '',
+        treatmentCodes: slot.treatmentCodes,
+        sessionMarker: slot.sessionMarker,
+        patientType: slot.patientType,
+        status: slot.status,
+        notes: slot.notes,
+        duration: slot.duration,
+        version: slot.version,
+      };
+    }
+
+    // 주차 그룹 (월~토)
+    const weeks: { start: string; end: string; dates: string[] }[] = [];
+    const firstOfMonth = new Date(year, month - 1, 1);
+    const lastOfMonth = new Date(year, month, 0);
+    const cursor = new Date(firstOfMonth);
+    const dow = cursor.getDay();
+    cursor.setDate(cursor.getDate() - (dow === 0 ? 6 : dow - 1)); // 월요일로 이동
+
+    while (cursor <= lastOfMonth) {
+      const weekDates: string[] = [];
+      for (let i = 0; i < 6; i++) {
+        const d = new Date(cursor);
+        d.setDate(cursor.getDate() + i);
+        weekDates.push(d.toISOString().slice(0, 10));
+      }
+      weeks.push({
+        start: weekDates[0],
+        end: weekDates[weekDates.length - 1],
+        dates: weekDates,
+      });
+      cursor.setDate(cursor.getDate() + 7);
+    }
+
+    // 통계
     const stats = {
       totalBooked: slots.filter(s => s.status === 'BOOKED').length,
       totalCompleted: slots.filter(s => s.status === 'COMPLETED').length,
@@ -177,8 +220,15 @@ router.get(
       data: {
         year,
         month,
-        therapists: therapists.map(t => ({ id: t.id, name: t.name })),
-        days,
+        therapists: therapists.map(t => ({ id: t.id, name: t.name, workSchedule: t.workSchedule })),
+        timeSlots: TIME_SLOTS,
+        weeks,
+        grid,
+        remarks: remarks.map(r => ({
+          id: r.id,
+          date: r.date.toISOString().slice(0, 10),
+          content: r.content,
+        })),
         stats,
       },
     });

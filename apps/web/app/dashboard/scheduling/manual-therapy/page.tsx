@@ -512,12 +512,11 @@ function RemarkEditor({
 interface MonthlyData {
   year: number;
   month: number;
-  therapists: { id: string; name: string }[];
-  days: Record<string, {
-    total: number;
-    byStatus: Record<string, number>;
-    byTherapist: Record<string, { total: number; booked: number }>;
-  }>;
+  therapists: { id: string; name: string; workSchedule: Record<string, boolean> | null }[];
+  timeSlots: string[];
+  weeks: { start: string; end: string; dates: string[] }[];
+  grid: Record<string, Record<string, Record<string, SlotData>>>;
+  remarks: { id: string; date: string; content: string }[];
   stats: { totalBooked: number; totalCompleted: number; noShows: number; cancelled: number };
 }
 
@@ -622,7 +621,8 @@ export default function ManualTherapyPage() {
     return days;
   };
 
-  if (loading && !data && !monthlyData) {
+  const isCurrentViewLoading = (viewMode === 'weekly' && !data) || (viewMode === 'monthly' && !monthlyData);
+  if (loading && isCurrentViewLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-slate-400">로딩 중...</div>
@@ -696,8 +696,8 @@ export default function ManualTherapyPage() {
         </div>
       </div>
 
-      {/* Monthly View */}
-      {viewMode === 'monthly' && (
+      {/* Monthly View - Stacked Weekly Grids */}
+      {viewMode === 'monthly' && monthlyData && (
         <>
           {/* Month Nav */}
           <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-2.5">
@@ -715,63 +715,143 @@ export default function ManualTherapyPage() {
             </button>
           </div>
 
-          {/* Monthly Calendar Grid */}
-          <div className="bg-white rounded-lg border overflow-hidden">
-            {/* Day headers */}
-            <div className="grid grid-cols-7 border-b">
-              {['일', '월', '화', '수', '목', '금', '토'].map((d, i) => (
-                <div key={d} className={`text-center text-xs font-semibold py-2 ${i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-slate-500'}`}>
-                  {d}
-                </div>
-              ))}
-            </div>
-            {/* Calendar cells */}
-            <div className="grid grid-cols-7">
-              {getMonthCalendarDays(monthYear, monthNum).map((dateStr, idx) => {
-                const dayData = dateStr ? monthlyData?.days?.[dateStr] : null;
-                const isToday = dateStr === new Date().toISOString().slice(0, 10);
-                const dayOfWeek = idx % 7;
+          {/* Stacked Weekly Grids */}
+          {monthlyData.weeks.map((week, wi) => {
+            const mTherapists = monthlyData.therapists || [];
+            const mTimeSlots = monthlyData.timeSlots || [];
+            const satTherapistsM = mTherapists.filter((t) => {
+              if (!t.workSchedule) return true;
+              return (t.workSchedule as any).sat !== false;
+            });
 
-                return (
-                  <div
-                    key={idx}
-                    onClick={() => dateStr && navigateToWeek(dateStr)}
-                    className={`min-h-[90px] border-b border-r p-1.5 transition ${
-                      dateStr ? 'cursor-pointer hover:bg-blue-50/50' : 'bg-slate-50'
-                    } ${dayOfWeek === 0 ? 'bg-red-50/30' : ''} ${dayOfWeek === 6 ? 'bg-blue-50/30' : ''}`}
-                  >
-                    {dateStr && (
-                      <>
-                        <div className={`text-xs font-medium mb-1 ${isToday ? 'bg-blue-600 text-white rounded-full w-5 h-5 flex items-center justify-center' : dayOfWeek === 0 ? 'text-red-400' : dayOfWeek === 6 ? 'text-blue-400' : 'text-slate-600'}`}>
-                          {parseInt(dateStr.split('-')[2], 10)}
-                        </div>
-                        {dayData && dayData.total > 0 && (
-                          <div className="space-y-0.5">
-                            <div className="text-xs font-semibold text-blue-600">{dayData.total}건</div>
-                            {monthlyData?.therapists?.map((t) => {
-                              const td = dayData.byTherapist?.[t.id];
-                              if (!td || td.total === 0) return null;
-                              return (
-                                <div key={t.id} className="text-[10px] text-slate-500 truncate">
-                                  {t.name} {td.total}
-                                </div>
-                              );
-                            })}
-                            {(dayData.byStatus.NO_SHOW > 0 || dayData.byStatus.CANCELLED > 0) && (
-                              <div className="text-[10px]">
-                                {dayData.byStatus.NO_SHOW > 0 && <span className="text-yellow-600">노쇼{dayData.byStatus.NO_SHOW} </span>}
-                                {dayData.byStatus.CANCELLED > 0 && <span className="text-red-500">취소{dayData.byStatus.CANCELLED}</span>}
-                              </div>
-                            )}
+            const totalColsM = week.dates.reduce((sum, _date, idx) => {
+              const dayName = DAY_LABELS[idx];
+              if (dayName === '토') return sum + satTherapistsM.length;
+              return sum + mTherapists.length;
+            }, 0);
+
+            return (
+              <div key={wi} className="bg-white rounded-lg border overflow-x-auto">
+                <div className="min-w-[900px]">
+                  {/* Week Header: Dates + Therapists */}
+                  <div className="grid border-b-2 border-slate-300" style={{ gridTemplateColumns: `70px repeat(${totalColsM}, minmax(90px, 1fr))` }}>
+                    <div className="px-2 py-2 text-xs font-semibold text-slate-500 border-r border-slate-200 flex items-center justify-center bg-slate-50">
+                      시간
+                    </div>
+                    {week.dates.map((date, idx) => {
+                      const dayLabel = DAY_LABELS[idx];
+                      const isSat = dayLabel === '토';
+                      const dayTherapists = isSat ? satTherapistsM : mTherapists;
+                      const dd = new Date(date + 'T00:00:00');
+                      const isToday = date === new Date().toISOString().slice(0, 10);
+
+                      return (
+                        <div
+                          key={date}
+                          className={`text-center border-r border-slate-200 last:border-r-0 ${isSat ? 'bg-blue-50/50' : ''}`}
+                          style={{ gridColumn: `span ${dayTherapists.length}` }}
+                        >
+                          <div
+                            className={`py-1.5 text-xs font-semibold border-b border-slate-200 ${
+                              isToday ? 'bg-blue-100 text-blue-700' : 'text-slate-700'
+                            }`}
+                          >
+                            {dd.getFullYear()}.{dd.getMonth() + 1}.{dd.getDate()} {dayLabel}
                           </div>
-                        )}
-                      </>
-                    )}
+                          <div className="grid" style={{ gridTemplateColumns: `repeat(${dayTherapists.length}, 1fr)` }}>
+                            {dayTherapists.map((t) => (
+                              <div key={t.id} className="text-xs py-1 text-slate-500 border-r border-slate-100 last:border-r-0 truncate px-1">
+                                {t.name}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
-          </div>
+
+                  {/* Time Rows */}
+                  {mTimeSlots.map((ts) => (
+                    <div
+                      key={ts}
+                      className="grid border-b border-slate-100 hover:bg-slate-50/50"
+                      style={{ gridTemplateColumns: `70px repeat(${totalColsM}, minmax(90px, 1fr))` }}
+                    >
+                      <div className="px-2 py-1 text-xs font-mono text-slate-500 border-r border-slate-200 flex items-center justify-center">
+                        {ts}
+                      </div>
+                      {week.dates.map((date, idx) => {
+                        const dayLabel = DAY_LABELS[idx];
+                        const isSat = dayLabel === '토';
+                        const dayTherapists = isSat ? satTherapistsM : mTherapists;
+
+                        return dayTherapists.map((t) => {
+                          const slot = monthlyData.grid?.[t.id]?.[date]?.[ts] || null;
+
+                          return (
+                            <div
+                              key={`${t.id}-${date}-${ts}`}
+                              onClick={() => { setWeekDate(date); setViewMode('weekly'); }}
+                              className={`px-1 py-0.5 border-r border-slate-100 last:border-r-0 cursor-pointer transition-colors min-h-[34px] ${
+                                slot
+                                  ? `${PATIENT_TYPE_STYLES[slot.patientType] || ''} ${STATUS_STYLES[slot.status] || ''} border`
+                                  : 'hover:bg-blue-50/50'
+                              } ${isSat ? 'bg-blue-50/30' : ''}`}
+                            >
+                              {slot && (
+                                <div className="text-xs leading-tight">
+                                  <div className="font-medium text-slate-800 truncate">{slot.patientName}</div>
+                                  <div className="flex items-center gap-0.5 flex-wrap mt-0.5">
+                                    {slot.treatmentCodes?.map((code: string) => {
+                                      const tc = TREATMENT_CODES.find((c) => c.code === code);
+                                      return (
+                                        <span
+                                          key={code}
+                                          className={`px-1 rounded text-[10px] leading-tight ${tc?.color || 'bg-slate-100 text-slate-500'}`}
+                                        >
+                                          {code}
+                                        </span>
+                                      );
+                                    })}
+                                    {slot.sessionMarker && (
+                                      <span className="px-1 rounded text-[10px] leading-tight bg-slate-200 text-slate-600">
+                                        {slot.sessionMarker}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        });
+                      })}
+                    </div>
+                  ))}
+
+                  {/* Remarks Row */}
+                  <div className="border-t-2 border-slate-300 bg-slate-50">
+                    <div className="grid" style={{ gridTemplateColumns: '70px 1fr' }}>
+                      <div className="px-2 py-2 text-xs font-semibold text-slate-500 border-r border-slate-200 flex items-center">
+                        비고
+                      </div>
+                      <div className="grid" style={{ gridTemplateColumns: `repeat(${week.dates.length}, 1fr)` }}>
+                        {week.dates.map((date) => {
+                          const remark = monthlyData.remarks?.find((r) => r.date === date);
+                          return (
+                            <div key={date} className="px-2 py-1.5 border-r border-slate-200 last:border-r-0 min-h-[28px]">
+                              <div className="text-xs text-slate-600">
+                                {remark?.content || ''}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </>
       )}
 
