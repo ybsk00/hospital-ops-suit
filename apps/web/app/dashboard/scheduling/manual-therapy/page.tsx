@@ -626,14 +626,7 @@ export default function ManualTherapyPage() {
     return days;
   };
 
-  const isCurrentViewLoading = (viewMode === 'weekly' && !data) || (viewMode === 'monthly' && !monthlyData);
-  if (loading && isCurrentViewLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-slate-400">로딩 중...</div>
-      </div>
-    );
-  }
+  // 초기 전체 로딩은 제거 - 각 뷰 내부에서 로딩 표시
 
   const currentStats = viewMode === 'weekly' ? data?.stats : monthlyData?.stats;
   const { week, therapists, timeSlots, grid, remarks, stats } = data || { week: { start: '', end: '' }, therapists: [] as Therapist[], timeSlots: [] as string[], grid: {} as Record<string, Record<string, Record<string, any>>>, remarks: [] as any[], stats: { totalBooked: 0, totalCompleted: 0, noShows: 0, cancelled: 0 } };
@@ -694,7 +687,7 @@ export default function ManualTherapyPage() {
       {/* Monthly View - Simple Calendar */}
       {viewMode === 'monthly' && (
         <>
-          {/* Month Nav */}
+          {/* Month Nav - always visible */}
           <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-2.5">
             <button onClick={() => shiftMonth(-1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition">
               <ChevronLeft size={20} />
@@ -714,6 +707,10 @@ export default function ManualTherapyPage() {
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-700">
               API 서버에서 데이터를 불러올 수 없습니다. API 재배포가 필요할 수 있습니다.
             </div>
+          )}
+
+          {loading && !monthlyData && (
+            <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm">로딩 중...</div></div>
           )}
 
           {(() => {
@@ -773,38 +770,48 @@ export default function ManualTherapyPage() {
         </>
       )}
 
-      {/* Weekly View - Error */}
-      {viewMode === 'weekly' && !data && !loading && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-700">
-          API 서버에서 데이터를 불러올 수 없습니다. API 재배포가 필요할 수 있습니다.
-        </div>
-      )}
-
       {/* Weekly View */}
-      {viewMode === 'weekly' && data && (
+      {viewMode === 'weekly' && (
       <>
-      {/* Week Nav */}
+      {/* Week Nav - always visible */}
       <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-2.5">
         <button
-          onClick={() => setWeekDate(shiftWeek(week.start, -1))}
+          onClick={() => setWeekDate(shiftWeek(data ? week.start : weekDate, -1))}
           className="p-1.5 rounded-lg hover:bg-slate-100 transition"
         >
           <ChevronLeft size={20} />
         </button>
         <div className="flex items-center gap-3">
-          <span className="font-semibold text-slate-800">{getWeekLabel(week.start, week.end)}</span>
+          <span className="font-semibold text-slate-800">
+            {data ? getWeekLabel(week.start, week.end) : `${weekDate} 주간`}
+          </span>
           <button onClick={goToday} className="text-xs px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100">
             오늘
           </button>
         </div>
         <button
-          onClick={() => setWeekDate(shiftWeek(week.start, 1))}
+          onClick={() => setWeekDate(shiftWeek(data ? week.start : weekDate, 1))}
           className="p-1.5 rounded-lg hover:bg-slate-100 transition"
         >
           <ChevronRight size={20} />
         </button>
       </div>
 
+      {!data && !loading && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-700">
+          API 서버에서 데이터를 불러올 수 없습니다. API 재배포가 필요할 수 있습니다.
+        </div>
+      )}
+
+      {loading && !data && (
+        <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm">로딩 중...</div></div>
+      )}
+      </>
+      )}
+
+      {/* Weekly Grid */}
+      {viewMode === 'weekly' && data && (
+      <>
       {/* Grid */}
       <div className="bg-white rounded-lg border overflow-x-auto">
         <div className="min-w-[900px]">

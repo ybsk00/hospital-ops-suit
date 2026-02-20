@@ -606,10 +606,7 @@ export default function RfSchedulePage() {
     return dates;
   };
 
-  const isCurrentViewLoading = (viewMode === 'daily' && !data) || (viewMode === 'weekly' && !weeklyData) || (viewMode === 'monthly' && !monthlyData);
-  if (loading && isCurrentViewLoading) {
-    return <div className="flex items-center justify-center h-64"><div className="text-slate-400">로딩 중...</div></div>;
-  }
+  // 초기 전체 로딩은 제거 - 각 뷰 내부에서 로딩 표시
 
   const currentStats = viewMode === 'daily' ? data?.stats : viewMode === 'weekly' ? weeklyData?.stats : monthlyData?.stats;
   const { rooms, timeSlots, grid, staffNotes, stats } = data || { rooms: [] as Room[], timeSlots: [] as string[], grid: {} as any, staffNotes: [] as any[], stats: { totalBooked: 0, totalCompleted: 0, noShows: 0, cancelled: 0 } };
@@ -657,17 +654,10 @@ export default function RfSchedulePage() {
         </div>
       </div>
 
-      {/* ═══ DAILY VIEW - Error ═══ */}
-      {viewMode === 'daily' && !data && !loading && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-700">
-          API 서버에서 데이터를 불러올 수 없습니다. API 재배포가 필요할 수 있습니다.
-        </div>
-      )}
-
       {/* ═══ DAILY VIEW ═══ */}
-      {viewMode === 'daily' && data && (
+      {viewMode === 'daily' && (
         <>
-          {/* Day Nav */}
+          {/* Day Nav - always visible */}
           <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-2.5">
             <button onClick={() => setDateStr(shiftDay(dateStr, -1))} className="p-1.5 rounded-lg hover:bg-slate-100 transition">
               <ChevronLeft size={20} />
@@ -681,6 +671,20 @@ export default function RfSchedulePage() {
             </button>
           </div>
 
+          {!data && !loading && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-700">
+              API 서버에서 데이터를 불러올 수 없습니다. API 재배포가 필요할 수 있습니다.
+            </div>
+          )}
+
+          {loading && !data && (
+            <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm">로딩 중...</div></div>
+          )}
+        </>
+      )}
+
+      {viewMode === 'daily' && data && (
+        <>
           {/* Staff Note */}
           <div className="bg-white rounded-lg border px-4 py-2.5">
             <StaffNoteBar staffNotes={staffNotes} date={dateStr} accessToken={accessToken || ''} onUpdate={fetchData} />
@@ -783,7 +787,7 @@ export default function RfSchedulePage() {
 
         return (
           <>
-            {/* Week Nav */}
+            {/* Week Nav - always visible */}
             <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-2.5">
               <button onClick={() => setWeekDate(shiftWeek(weekDate, -1))} className="p-1.5 rounded-lg hover:bg-slate-100 transition">
                 <ChevronLeft size={20} />
@@ -804,6 +808,10 @@ export default function RfSchedulePage() {
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-700">
                 API 서버에서 데이터를 불러올 수 없습니다. API 재배포가 필요할 수 있습니다.
               </div>
+            )}
+
+            {loading && !weeklyData && (
+              <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm">로딩 중...</div></div>
             )}
 
             {/* Weekly Grid: rooms(rows) × days(cols) */}
@@ -867,7 +875,7 @@ export default function RfSchedulePage() {
       {/* ═══ MONTHLY VIEW - Simple Calendar ═══ */}
       {viewMode === 'monthly' && (
         <>
-          {/* Month Nav */}
+          {/* Month Nav - always visible */}
           <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-2.5">
             <button onClick={() => shiftMonth(-1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition">
               <ChevronLeft size={20} />
@@ -888,6 +896,10 @@ export default function RfSchedulePage() {
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-700">
               API 서버에서 데이터를 불러올 수 없습니다. API 재배포가 필요할 수 있습니다.
             </div>
+          )}
+
+          {loading && !monthlyData && (
+            <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm">로딩 중...</div></div>
           )}
 
           {(() => {
