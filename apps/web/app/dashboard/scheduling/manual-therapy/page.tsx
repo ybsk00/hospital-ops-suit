@@ -467,8 +467,8 @@ function RemarkEditor({
 
   return (
     <div className="border-t-2 border-slate-300 bg-slate-50">
-      <div className="grid" style={{ gridTemplateColumns: '70px 1fr' }}>
-        <div className="px-2 py-2 text-xs font-semibold text-slate-500 border-r border-slate-200 flex items-center">
+      <div className="grid" style={{ gridTemplateColumns: '46px 1fr' }}>
+        <div className="px-1 py-1.5 text-[10px] font-semibold text-slate-500 border-r border-slate-200 flex items-center">
           비고
         </div>
         <div className="grid" style={{ gridTemplateColumns: `repeat(${weekDates.length}, 1fr)` }}>
@@ -640,17 +640,7 @@ export default function ManualTherapyPage() {
     weekDates.push(dd.toISOString().slice(0, 10));
   }
 
-  // 토요일 근무 치료사 수 (workSchedule 기준)
-  const satTherapists = therapists.filter((t) => {
-    if (!t.workSchedule) return true;
-    return (t.workSchedule as any).sat !== false;
-  });
-
-  const totalCols = weekDates.reduce((sum, date, idx) => {
-    const dayName = DAY_LABELS[idx];
-    if (dayName === '토') return sum + satTherapists.length;
-    return sum + therapists.length;
-  }, 0);
+  const totalCols = weekDates.length * therapists.length;
 
   return (
     <div className="space-y-4">
@@ -716,32 +706,22 @@ export default function ManualTherapyPage() {
           </div>
 
           {/* Stacked Weekly Grids */}
-          {monthlyData.weeks.map((week, wi) => {
+          {monthlyData.weeks?.map((week, wi) => {
             const mTherapists = monthlyData.therapists || [];
             const mTimeSlots = monthlyData.timeSlots || [];
-            const satTherapistsM = mTherapists.filter((t) => {
-              if (!t.workSchedule) return true;
-              return (t.workSchedule as any).sat !== false;
-            });
-
-            const totalColsM = week.dates.reduce((sum, _date, idx) => {
-              const dayName = DAY_LABELS[idx];
-              if (dayName === '토') return sum + satTherapistsM.length;
-              return sum + mTherapists.length;
-            }, 0);
+            const totalColsM = week.dates.length * mTherapists.length;
 
             return (
               <div key={wi} className="bg-white rounded-lg border overflow-x-auto">
-                <div className="min-w-[900px]">
-                  {/* Week Header: Dates + Therapists */}
-                  <div className="grid border-b-2 border-slate-300" style={{ gridTemplateColumns: `70px repeat(${totalColsM}, minmax(90px, 1fr))` }}>
-                    <div className="px-2 py-2 text-xs font-semibold text-slate-500 border-r border-slate-200 flex items-center justify-center bg-slate-50">
+                <div className="min-w-[800px]">
+                  {/* Week Header */}
+                  <div className="grid border-b-2 border-slate-300" style={{ gridTemplateColumns: `46px repeat(${totalColsM}, minmax(56px, 1fr))` }}>
+                    <div className="px-1 py-1.5 text-[10px] font-semibold text-slate-500 border-r border-slate-200 flex items-center justify-center bg-slate-50">
                       시간
                     </div>
                     {week.dates.map((date, idx) => {
                       const dayLabel = DAY_LABELS[idx];
                       const isSat = dayLabel === '토';
-                      const dayTherapists = isSat ? satTherapistsM : mTherapists;
                       const dd = new Date(date + 'T00:00:00');
                       const isToday = date === new Date().toISOString().slice(0, 10);
 
@@ -749,19 +729,15 @@ export default function ManualTherapyPage() {
                         <div
                           key={date}
                           className={`text-center border-r border-slate-200 last:border-r-0 ${isSat ? 'bg-blue-50/50' : ''}`}
-                          style={{ gridColumn: `span ${dayTherapists.length}` }}
+                          style={{ gridColumn: `span ${mTherapists.length}` }}
                         >
-                          <div
-                            className={`py-1.5 text-xs font-semibold border-b border-slate-200 ${
-                              isToday ? 'bg-blue-100 text-blue-700' : 'text-slate-700'
-                            }`}
-                          >
-                            {dd.getFullYear()}.{dd.getMonth() + 1}.{dd.getDate()} {dayLabel}
+                          <div className={`py-1 text-[10px] font-semibold border-b border-slate-200 ${isToday ? 'bg-blue-100 text-blue-700' : 'text-slate-700'}`}>
+                            {dd.getMonth() + 1}/{dd.getDate()} {dayLabel}
                           </div>
-                          <div className="grid" style={{ gridTemplateColumns: `repeat(${dayTherapists.length}, 1fr)` }}>
-                            {dayTherapists.map((t) => (
-                              <div key={t.id} className="text-xs py-1 text-slate-500 border-r border-slate-100 last:border-r-0 truncate px-1">
-                                {t.name}
+                          <div className="grid" style={{ gridTemplateColumns: `repeat(${mTherapists.length}, 1fr)` }}>
+                            {mTherapists.map((t) => (
+                              <div key={t.id} className="text-[10px] py-0.5 text-slate-500 border-r border-slate-100 last:border-r-0 truncate px-0.5">
+                                {t.name.length > 2 ? t.name.slice(0, 2) : t.name}
                               </div>
                             ))}
                           </div>
@@ -775,49 +751,39 @@ export default function ManualTherapyPage() {
                     <div
                       key={ts}
                       className="grid border-b border-slate-100 hover:bg-slate-50/50"
-                      style={{ gridTemplateColumns: `70px repeat(${totalColsM}, minmax(90px, 1fr))` }}
+                      style={{ gridTemplateColumns: `46px repeat(${totalColsM}, minmax(56px, 1fr))` }}
                     >
-                      <div className="px-2 py-1 text-xs font-mono text-slate-500 border-r border-slate-200 flex items-center justify-center">
+                      <div className="px-1 py-0.5 text-[10px] font-mono text-slate-500 border-r border-slate-200 flex items-center justify-center">
                         {ts}
                       </div>
                       {week.dates.map((date, idx) => {
-                        const dayLabel = DAY_LABELS[idx];
-                        const isSat = dayLabel === '토';
-                        const dayTherapists = isSat ? satTherapistsM : mTherapists;
+                        const isSat = DAY_LABELS[idx] === '토';
 
-                        return dayTherapists.map((t) => {
+                        return mTherapists.map((t) => {
                           const slot = monthlyData.grid?.[t.id]?.[date]?.[ts] || null;
 
                           return (
                             <div
                               key={`${t.id}-${date}-${ts}`}
                               onClick={() => { setWeekDate(date); setViewMode('weekly'); }}
-                              className={`px-1 py-0.5 border-r border-slate-100 last:border-r-0 cursor-pointer transition-colors min-h-[34px] ${
+                              className={`px-0.5 py-0.5 border-r border-slate-100 last:border-r-0 cursor-pointer transition-colors min-h-[28px] ${
                                 slot
                                   ? `${PATIENT_TYPE_STYLES[slot.patientType] || ''} ${STATUS_STYLES[slot.status] || ''} border`
                                   : 'hover:bg-blue-50/50'
                               } ${isSat ? 'bg-blue-50/30' : ''}`}
                             >
                               {slot && (
-                                <div className="text-xs leading-tight">
+                                <div className="text-[9px] leading-tight">
                                   <div className="font-medium text-slate-800 truncate">{slot.patientName}</div>
-                                  <div className="flex items-center gap-0.5 flex-wrap mt-0.5">
+                                  <div className="flex items-center gap-0.5 flex-wrap">
                                     {slot.treatmentCodes?.map((code: string) => {
                                       const tc = TREATMENT_CODES.find((c) => c.code === code);
                                       return (
-                                        <span
-                                          key={code}
-                                          className={`px-1 rounded text-[10px] leading-tight ${tc?.color || 'bg-slate-100 text-slate-500'}`}
-                                        >
+                                        <span key={code} className={`px-0.5 rounded text-[8px] leading-tight ${tc?.color || 'bg-slate-100 text-slate-500'}`}>
                                           {code}
                                         </span>
                                       );
                                     })}
-                                    {slot.sessionMarker && (
-                                      <span className="px-1 rounded text-[10px] leading-tight bg-slate-200 text-slate-600">
-                                        {slot.sessionMarker}
-                                      </span>
-                                    )}
                                   </div>
                                 </div>
                               )}
@@ -830,18 +796,16 @@ export default function ManualTherapyPage() {
 
                   {/* Remarks Row */}
                   <div className="border-t-2 border-slate-300 bg-slate-50">
-                    <div className="grid" style={{ gridTemplateColumns: '70px 1fr' }}>
-                      <div className="px-2 py-2 text-xs font-semibold text-slate-500 border-r border-slate-200 flex items-center">
+                    <div className="grid" style={{ gridTemplateColumns: '46px 1fr' }}>
+                      <div className="px-1 py-1.5 text-[10px] font-semibold text-slate-500 border-r border-slate-200 flex items-center">
                         비고
                       </div>
                       <div className="grid" style={{ gridTemplateColumns: `repeat(${week.dates.length}, 1fr)` }}>
                         {week.dates.map((date) => {
                           const remark = monthlyData.remarks?.find((r) => r.date === date);
                           return (
-                            <div key={date} className="px-2 py-1.5 border-r border-slate-200 last:border-r-0 min-h-[28px]">
-                              <div className="text-xs text-slate-600">
-                                {remark?.content || ''}
-                              </div>
+                            <div key={date} className="px-1 py-1 border-r border-slate-200 last:border-r-0 min-h-[24px]">
+                              <div className="text-[10px] text-slate-600">{remark?.content || ''}</div>
                             </div>
                           );
                         })}
@@ -884,33 +848,32 @@ export default function ManualTherapyPage() {
       <div className="bg-white rounded-lg border overflow-x-auto">
         <div className="min-w-[900px]">
           {/* Header Row 1: Dates */}
-          <div className="grid border-b-2 border-slate-300" style={{ gridTemplateColumns: `70px repeat(${totalCols}, minmax(90px, 1fr))` }}>
-            <div className="px-2 py-2 text-xs font-semibold text-slate-500 border-r border-slate-200 flex items-center justify-center">
+          <div className="grid border-b-2 border-slate-300" style={{ gridTemplateColumns: `46px repeat(${totalCols}, minmax(56px, 1fr))` }}>
+            <div className="px-1 py-1.5 text-[10px] font-semibold text-slate-500 border-r border-slate-200 flex items-center justify-center">
               시간
             </div>
             {weekDates.map((date, idx) => {
               const dayLabel = DAY_LABELS[idx];
               const isSat = dayLabel === '토';
-              const dayTherapists = isSat ? satTherapists : therapists;
               const isToday = date === new Date().toISOString().slice(0, 10);
 
               return (
                 <div
                   key={date}
                   className={`text-center border-r border-slate-200 last:border-r-0 ${isSat ? 'bg-blue-50/50' : ''}`}
-                  style={{ gridColumn: `span ${dayTherapists.length}` }}
+                  style={{ gridColumn: `span ${therapists.length}` }}
                 >
                   <div
-                    className={`py-1.5 text-xs font-semibold border-b border-slate-200 ${
+                    className={`py-1 text-[10px] font-semibold border-b border-slate-200 ${
                       isToday ? 'bg-blue-100 text-blue-700' : 'text-slate-700'
                     }`}
                   >
                     {formatDate(date)}({dayLabel})
                   </div>
-                  <div className="grid" style={{ gridTemplateColumns: `repeat(${dayTherapists.length}, 1fr)` }}>
-                    {dayTherapists.map((t) => (
-                      <div key={t.id} className="text-xs py-1 text-slate-500 border-r border-slate-100 last:border-r-0 truncate px-1">
-                        {t.name}
+                  <div className="grid" style={{ gridTemplateColumns: `repeat(${therapists.length}, 1fr)` }}>
+                    {therapists.map((t) => (
+                      <div key={t.id} className="text-[10px] py-0.5 text-slate-500 border-r border-slate-100 last:border-r-0 truncate px-0.5">
+                        {t.name.length > 2 ? t.name.slice(0, 2) : t.name}
                       </div>
                     ))}
                   </div>
@@ -924,50 +887,41 @@ export default function ManualTherapyPage() {
             <div
               key={ts}
               className="grid border-b border-slate-100 hover:bg-slate-50/50"
-              style={{ gridTemplateColumns: `70px repeat(${totalCols}, minmax(90px, 1fr))` }}
+              style={{ gridTemplateColumns: `46px repeat(${totalCols}, minmax(56px, 1fr))` }}
             >
-              {/* Time label */}
-              <div className="px-2 py-1 text-xs font-mono text-slate-500 border-r border-slate-200 flex items-center justify-center">
+              <div className="px-1 py-0.5 text-[10px] font-mono text-slate-500 border-r border-slate-200 flex items-center justify-center">
                 {ts}
               </div>
-              {/* Cells */}
               {weekDates.map((date, idx) => {
-                const dayLabel = DAY_LABELS[idx];
-                const isSat = dayLabel === '토';
-                const dayTherapists = isSat ? satTherapists : therapists;
+                const isSat = DAY_LABELS[idx] === '토';
 
-                return dayTherapists.map((t) => {
+                return therapists.map((t) => {
                   const slot = grid[t.id]?.[date]?.[ts] || null;
 
                   return (
                     <div
                       key={`${t.id}-${date}-${ts}`}
                       onClick={() => openSlotModal(t, date, ts, slot)}
-                      className={`px-1 py-0.5 border-r border-slate-100 last:border-r-0 cursor-pointer transition-colors min-h-[38px] ${
+                      className={`px-0.5 py-0.5 border-r border-slate-100 last:border-r-0 cursor-pointer transition-colors min-h-[32px] ${
                         slot
                           ? `${PATIENT_TYPE_STYLES[slot.patientType] || ''} ${STATUS_STYLES[slot.status] || ''} border`
                           : 'hover:bg-blue-50/50'
                       } ${isSat ? 'bg-blue-50/30' : ''}`}
                     >
                       {slot && (
-                        <div className="text-xs leading-tight">
+                        <div className="text-[10px] leading-tight">
                           <div className="font-medium text-slate-800 truncate">{slot.patientName}</div>
-                          <div className="flex items-center gap-0.5 flex-wrap mt-0.5">
+                          <div className="flex items-center gap-0.5 flex-wrap">
                             {slot.treatmentCodes?.map((code: string) => {
                               const tc = TREATMENT_CODES.find((c) => c.code === code);
                               return (
-                                <span
-                                  key={code}
-                                  className={`px-1 rounded text-[10px] leading-tight ${tc?.color || 'bg-slate-100 text-slate-500'}`}
-                                >
+                                <span key={code} className={`px-0.5 rounded text-[9px] leading-tight ${tc?.color || 'bg-slate-100 text-slate-500'}`}>
                                   {code}
                                 </span>
                               );
                             })}
                             {slot.sessionMarker && (
-                              <span className="px-1 rounded text-[10px] leading-tight bg-slate-200 text-slate-600">
-                                {slot.sessionMarker}
-                              </span>
+                              <span className="px-0.5 rounded text-[9px] leading-tight bg-slate-200 text-slate-600">{slot.sessionMarker}</span>
                             )}
                           </div>
                         </div>
