@@ -1040,6 +1040,156 @@ export async function rejectPendingAction(
 }
 
 // ═══════════════════════════════════════════════════════════
+//  환자 매칭 + 자동생성 공통 함수
+// ═══════════════════════════════════════════════════════════
+
+type PatientResolveResult =
+  | { status: 'resolved'; patientId: string; patientName: string; patientEmrId: string | null }
+  | { status: 'sameNameCheck'; result: WriteHandlerResult }
+  | { status: 'disambiguation'; result: WriteHandlerResult };
+
+/**
+ * 환자 검색 → 자동생성/동명이인 처리
+ * - 0명: 자동 Patient 생성 (이름만, dob 있으면 포함)
+ * - 1명 + 미확인: "동명이인인가요?" 질문
+ * - 1명 + useExisting: 기존 환자 사용
+ * - 1명 + dob 일치: 기존 환자 사용
+ * - 1명 + dob 불일치: 새 Patient 생성
+ * - 2명+: 생년월일 포함 disambiguation
+ */
+async function resolvePatient(args: Record<string, any>): Promise<PatientResolveResult> {
+  const name = args.patientName || '';
+
+  // DB에서 같은 이름 환자 검색
+  const existingPatients = await prisma.patient.findMany({
+    where: { name: { equals: name, mode: 'insensitive' }, deletedAt: null },
+    select: { id: true, name: true, emrPatientId: true, dob: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  // ── Case 0: 미등록 → 자동 Patient 생성 ──
+  if (existingPatients.length === 0) {
+    const newPatient = await prisma.patient.create({
+      data: {
+        name,
+        dob: args.dob ? new Date(args.dob + 'T00:00:00+09:00') : null,
+      },
+    });
+    console.log(`[PatientResolve] 신규 환자 생성: ${name} (id: ${newPatient.id})`);
+    return {
+      status: 'resolved',
+      patientId: newPatient.id,
+      patientName: newPatient.name,
+      patientEmrId: newPatient.emrPatientId,
+    };
+  }
+
+  // ── Case 1: 동명 1명 ──
+  if (existingPatients.length === 1) {
+    const existing = existingPatients[0];
+
+    // useExistingPatient=true → 같은 사람 확인됨
+    if (args.useExistingPatient) {
+      return {
+        status: 'resolved',
+        patientId: existing.id,
+        patientName: existing.name,
+        patientEmrId: existing.emrPatientId,
+      };
+    }
+
+    // dob 제공됨 → 비교
+    if (args.dob) {
+      const inputDob = args.dob; // "YYYY-MM-DD"
+      const existingDob = existing.dob ? existing.dob.toISOString().slice(0, 10) : null;
+
+      if (existingDob === inputDob) {
+        // 생년월일 일치 → 기존 환자
+        return {
+          status: 'resolved',
+          patientId: existing.id,
+          patientName: existing.name,
+          patientEmrId: existing.emrPatientId,
+        };
+      } else {
+        // 생년월일 불일치 → 동명이인, 새 Patient 생성
+        const newPatient = await prisma.patient.create({
+          data: {
+            name,
+            dob: new Date(args.dob + 'T00:00:00+09:00'),
+          },
+        });
+        console.log(`[PatientResolve] 동명이인 신규 생성: ${name} (dob: ${args.dob}, id: ${newPatient.id})`);
+        return {
+          status: 'resolved',
+          patientId: newPatient.id,
+          patientName: newPatient.name,
+          patientEmrId: newPatient.emrPatientId,
+        };
+      }
+    }
+
+    // dob도 useExisting도 없음 → 동명이인 질문
+    const dobStr = existing.dob
+      ? `${existing.dob.getFullYear()}년 ${existing.dob.getMonth() + 1}월 ${existing.dob.getDate()}일생`
+      : '생년월일 미등록';
+    return {
+      status: 'sameNameCheck',
+      result: {
+        type: 'error',
+        message: `"${existing.name}" 환자가 이미 등록되어 있습니다(${dobStr}). 같은 분이면 "같은 사람"이라고 해주세요. 동명이인이라면 생년월일을 알려주세요. (예: 1990-03-15)`,
+      },
+    };
+  }
+
+  // ── Case 2+: 동명 여러 명 ──
+  // dob 제공됨 → 일치하는 환자 찾기
+  if (args.dob) {
+    const inputDob = args.dob;
+    const matched = existingPatients.find(
+      p => p.dob && p.dob.toISOString().slice(0, 10) === inputDob,
+    );
+    if (matched) {
+      return {
+        status: 'resolved',
+        patientId: matched.id,
+        patientName: matched.name,
+        patientEmrId: matched.emrPatientId,
+      };
+    }
+    // dob 일치 환자 없음 → 새로 생성
+    const newPatient = await prisma.patient.create({
+      data: {
+        name,
+        dob: new Date(args.dob + 'T00:00:00+09:00'),
+      },
+    });
+    console.log(`[PatientResolve] 동명이인 다수 중 신규 생성: ${name} (dob: ${args.dob}, id: ${newPatient.id})`);
+    return {
+      status: 'resolved',
+      patientId: newPatient.id,
+      patientName: newPatient.name,
+      patientEmrId: newPatient.emrPatientId,
+    };
+  }
+
+  // dob 없음 → 생년월일 포함 disambiguation
+  return {
+    status: 'disambiguation',
+    result: {
+      type: 'disambiguation',
+      message: `"${name}" 이름의 환자가 ${existingPatients.length}명 있습니다. 선택해 주세요.`,
+      patients: existingPatients.map(p => ({
+        id: p.id,
+        name: p.name,
+        emrId: p.emrPatientId,
+        dob: p.dob,
+      })),
+    },
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
 //  도수치료 예약 생성
 // ═══════════════════════════════════════════════════════════
 
@@ -1048,24 +1198,13 @@ async function handleCreateManualTherapySlot(
   user: any,
   sessionId: string,
 ): Promise<WriteHandlerResult> {
-  // 환자 매칭 (DB에 없으면 이름만으로 진행)
-  let patientId: string | null = null;
-  let patientName = args.patientName || '';
-  let patientEmrId: string | null = null;
-
-  const patientResult = await matchPatient(args.patientName);
-  if (patientResult.status === 'found') {
-    patientId = patientResult.patient.id;
-    patientName = patientResult.patient.name;
-    patientEmrId = patientResult.patient.emrPatientId;
-  } else if (patientResult.status === 'multiple') {
-    return {
-      type: 'disambiguation',
-      message: `"${args.patientName}" 이름의 환자가 ${patientResult.patients.length}명 있습니다. 선택해 주세요.`,
-      patients: patientResult.patients.map(p => ({ id: p.id, name: p.name, emrId: p.emrPatientId, dob: p.dob })),
-    };
+  // 환자 매칭 + 자동생성
+  const patientResolve = await resolvePatient(args);
+  if (patientResolve.status === 'sameNameCheck' || patientResolve.status === 'disambiguation') {
+    return patientResolve.result;
   }
-  // notFound → patientId=null, patientName만 사용하여 진행
+
+  const { patientId, patientName, patientEmrId } = patientResolve;
 
   // 치료사 매칭 또는 자동배정
   let therapist: { id: string; name: string } | null = null;
@@ -1084,20 +1223,16 @@ async function handleCreateManualTherapySlot(
     }
   }
 
-  // 해당 환자 동시간 도수 예약 충돌 검사 (DB 환자 또는 이름 기반)
-  const conflictWhere: any = {
-    date: new Date(args.date),
-    timeSlot: args.time,
-    deletedAt: null,
-    status: { not: 'CANCELLED' },
-  };
-  if (patientId) {
-    conflictWhere.patientId = patientId;
-  } else {
-    conflictWhere.patientName = patientName;
-  }
-
-  const existingSlot = await prisma.manualTherapySlot.findFirst({ where: conflictWhere });
+  // 해당 환자 동시간 도수 예약 충돌 검사
+  const existingSlot = await prisma.manualTherapySlot.findFirst({
+    where: {
+      patientId,
+      date: new Date(args.date),
+      timeSlot: args.time,
+      deletedAt: null,
+      status: { not: 'CANCELLED' },
+    },
+  });
   if (existingSlot) {
     return { type: 'error', message: `${patientName} 환자가 ${args.date} ${args.time}에 이미 도수 예약이 있습니다.` };
   }
@@ -1228,23 +1363,13 @@ async function handleCreateRfScheduleSlot(
   user: any,
   sessionId: string,
 ): Promise<WriteHandlerResult> {
-  // 환자 매칭 (DB에 없으면 이름만으로 진행)
-  let patientId: string | null = null;
-  let patientName = args.patientName || '';
-  let patientEmrId: string | null = null;
-
-  const patientResult = await matchPatient(args.patientName);
-  if (patientResult.status === 'found') {
-    patientId = patientResult.patient.id;
-    patientName = patientResult.patient.name;
-    patientEmrId = patientResult.patient.emrPatientId;
-  } else if (patientResult.status === 'multiple') {
-    return {
-      type: 'disambiguation',
-      message: `"${args.patientName}" 이름의 환자가 여러 명입니다. 선택해 주세요.`,
-      patients: patientResult.patients.map(p => ({ id: p.id, name: p.name, emrId: p.emrPatientId, dob: p.dob })),
-    };
+  // 환자 매칭 + 자동생성
+  const patientResolve = await resolvePatient(args);
+  if (patientResolve.status === 'sameNameCheck' || patientResolve.status === 'disambiguation') {
+    return patientResolve.result;
   }
+
+  const { patientId, patientName, patientEmrId } = patientResolve;
 
   const duration = args.duration || 120;
   const doctorCode = args.doctorCode || 'C';
@@ -1267,18 +1392,14 @@ async function handleCreateRfScheduleSlot(
   }
 
   // 같은 환자 같은 날 중복 검사
-  const conflictWhere: any = {
-    date: new Date(args.date),
-    deletedAt: null,
-    status: { not: 'CANCELLED' },
-  };
-  if (patientId) {
-    conflictWhere.patientId = patientId;
-  } else {
-    conflictWhere.patientName = patientName;
-  }
-
-  const existingSlot = await prisma.rfScheduleSlot.findFirst({ where: conflictWhere });
+  const existingSlot = await prisma.rfScheduleSlot.findFirst({
+    where: {
+      patientId,
+      date: new Date(args.date),
+      deletedAt: null,
+      status: { not: 'CANCELLED' },
+    },
+  });
   if (existingSlot) {
     return { type: 'error', message: `${patientName} 환자가 ${args.date}에 이미 고주파 예약이 있습니다.` };
   }

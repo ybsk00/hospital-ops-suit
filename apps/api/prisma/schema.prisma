@@ -151,10 +151,10 @@ enum PatientStatus {
 
 model Patient {
   id           String        @id @default(uuid())
-  emrPatientId String        @unique
+  emrPatientId String?       @unique
   name         String
-  dob          DateTime
-  sex          String
+  dob          DateTime?
+  sex          String?
   phone        String?
   status       PatientStatus @default(ACTIVE)
   createdAt    DateTime      @default(now())
