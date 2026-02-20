@@ -7,36 +7,40 @@ import { ChevronLeft, ChevronRight, Calendar, Save, Plus, Search } from 'lucide-
 
 type TabType = 'room' | 'doctor' | 'discharged';
 
-interface HandoverPatient {
-  patientId: string;
-  patientName: string;
-  emrPatientId: string | null;
-  roomNumber: string | null;
-  bedName: string | null;
-  sex: string | null;
-  age: number | null;
-  doctorCode: string | null;
-  admissionStatus: string | null;
-  admitDate: string | null;
-  diagnosis: string | null;
-  clinicalInfo: {
+/* ── API 응답 타입 ── */
+interface PatientEntry {
+  admissionId: string;
+  patient: {
+    id: string;
+    name: string;
+    chartNumber: string;
+    sex: string;
+    age: number | null;
+  };
+  roomName: string;
+  bedLabel: string;
+  doctor: string | null;
+  admitDate: string;
+  plannedDischargeDate: string | null;
+  clinical: {
+    diagnosis?: string;
     referralHospital?: string;
     chemoPort?: string;
     metastasis?: string;
     bloodDrawSchedule?: string;
     guardianInfo?: string;
   } | null;
+  todaySchedule: Array<{ type: string; time: string; detail: string }>;
   handover: {
     id: string;
     bloodDraw: boolean;
-    bloodDrawNote: string | null;
-    chemoNote: string | null;
-    externalVisit: string | null;
-    outing: string | null;
-    returnTime: string | null;
-    content: string | null;
+    bloodDrawNote?: string;
+    chemoNote?: string;
+    externalVisit?: string;
+    outing?: string;
+    returnTime?: string;
+    content?: string;
   } | null;
-  todayTreatments: Array<{ type: string; time: string }>;
 }
 
 interface SummaryData {
@@ -46,12 +50,21 @@ interface SummaryData {
   readmitCount: number;
 }
 
-interface DischargedPatient {
+interface DoctorInfo {
   id: string;
   name: string;
-  emrPatientId: string | null;
-  dischargeDate: string;
-  roomName: string | null;
+}
+
+interface DischargedPatient {
+  admissionId: string;
+  patientId: string;
+  name: string;
+  chartNumber: string;
+  sex: string;
+  doctor: string | null;
+  admitDate: string;
+  dischargeDate: string | null;
+  diagnosis: string | null;
 }
 
 function toDateStr(d: Date): string {
@@ -64,10 +77,10 @@ export default function HandoverPage() {
   const [date, setDate] = useState(toDateStr(new Date()));
   const [loading, setLoading] = useState(false);
 
-  // Data
-  const [patients, setPatients] = useState<HandoverPatient[]>([]);
+  // Data — rooms Record를 flat 배열로 변환하여 보관
+  const [roomGroups, setRoomGroups] = useState<Record<string, PatientEntry[]>>({});
   const [summary, setSummary] = useState<SummaryData>({ currentCount: 0, admitCount: 0, dischargeCount: 0, readmitCount: 0 });
-  const [doctors, setDoctors] = useState<string[]>([]);
+  const [doctors, setDoctors] = useState<DoctorInfo[]>([]);
   const [selectedDoctor, setSelectedDoctor] = useState('');
   const [discharged, setDischarged] = useState<DischargedPatient[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -88,7 +101,10 @@ export default function HandoverPage() {
     setLoading(true);
     try {
       const res = await api(`/api/handover/daily?date=${date}`, { token: accessToken || undefined });
-      if (res.success) setPatients(res.data.patients || []);
+      if (res.success) {
+        // API returns { rooms: Record<string, PatientEntry[]> }
+        setRoomGroups(res.data.rooms || {});
+      }
     } catch { /* ignore */ }
     setLoading(false);
   }, [date, accessToken]);
@@ -96,11 +112,12 @@ export default function HandoverPage() {
   const fetchByDoctor = useCallback(async () => {
     setLoading(true);
     try {
-      const q = selectedDoctor ? `&doctor=${selectedDoctor}` : '';
+      const q = selectedDoctor ? `&doctor=${encodeURIComponent(selectedDoctor)}` : '';
       const res = await api(`/api/handover/by-doctor?date=${date}${q}`, { token: accessToken || undefined });
       if (res.success) {
-        setPatients(res.data.patients || []);
+        // API returns { doctors: [{id, name}], groups: Record<string, PatientEntry[]> }
         setDoctors(res.data.doctors || []);
+        setRoomGroups(res.data.groups || {});
       }
     } catch { /* ignore */ }
     setLoading(false);
@@ -146,13 +163,7 @@ export default function HandoverPage() {
     setSaving(false);
   };
 
-  // Group patients by room
-  const groupedByRoom = patients.reduce<Record<string, HandoverPatient[]>>((acc, p) => {
-    const room = p.roomNumber || '미배정';
-    if (!acc[room]) acc[room] = [];
-    acc[room].push(p);
-    return acc;
-  }, {});
+  const groupLabel = tab === 'room' ? '병실' : '담당의';
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
@@ -202,9 +213,9 @@ export default function HandoverPage() {
             전체
           </button>
           {doctors.map((d) => (
-            <button key={d} onClick={() => setSelectedDoctor(d)}
-              className={`px-3 py-1.5 rounded text-sm ${selectedDoctor === d ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-              {d}
+            <button key={d.id} onClick={() => setSelectedDoctor(d.name)}
+              className={`px-3 py-1.5 rounded text-sm ${selectedDoctor === d.name ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+              {d.name}
             </button>
           ))}
         </div>
@@ -231,13 +242,13 @@ export default function HandoverPage() {
       {/* ────── 병실별/의사별 뷰 ────── */}
       {(tab === 'room' || tab === 'doctor') && !loading && (
         <div className="space-y-4">
-          {Object.keys(groupedByRoom).length === 0 && (
+          {Object.keys(roomGroups).length === 0 && (
             <div className="text-center py-12 text-slate-400">인계 데이터가 없습니다.</div>
           )}
-          {Object.entries(groupedByRoom).sort(([a], [b]) => a.localeCompare(b)).map(([room, pts]) => (
-            <div key={room} className="border rounded-lg overflow-hidden">
+          {Object.entries(roomGroups).sort(([a], [b]) => a.localeCompare(b)).map(([groupKey, entries]) => (
+            <div key={groupKey} className="border rounded-lg overflow-hidden">
               <div className="bg-slate-50 px-4 py-2 border-b font-semibold text-sm">
-                {room} <span className="text-slate-400 font-normal">({pts.length}명)</span>
+                {groupKey || '미배정'} <span className="text-slate-400 font-normal">({(entries || []).length}명)</span>
               </div>
               <table className="w-full text-sm">
                 <thead>
@@ -252,66 +263,70 @@ export default function HandoverPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pts.map((p) => (
-                    <tr key={p.patientId} className="border-b hover:bg-slate-50">
-                      <td className="px-3 py-2">
-                        <div className="font-medium">{p.patientName}</div>
-                        {p.emrPatientId && <div className="text-xs text-slate-400">{p.emrPatientId}</div>}
-                      </td>
-                      <td className="px-3 py-2 text-slate-500">
-                        {p.age != null ? `${p.age}/${p.sex || ''}` : '-'}
-                      </td>
-                      <td className="px-3 py-2 text-xs">{p.diagnosis || '-'}</td>
-                      <td className="px-3 py-2">
-                        {p.handover?.bloodDraw ? (
-                          <span className="inline-flex items-center px-1.5 py-0.5 bg-red-50 text-red-600 rounded text-xs font-medium">
-                            채혈 {p.handover.bloodDrawNote || ''}
-                          </span>
-                        ) : '-'}
-                      </td>
-                      <td className="px-3 py-2">
-                        {p.todayTreatments.length > 0 ? (
-                          <div className="space-y-0.5">
-                            {p.todayTreatments.map((t, i) => (
-                              <span key={i} className="inline-block mr-1 px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-xs">
-                                {t.type} {t.time}
-                              </span>
-                            ))}
-                          </div>
-                        ) : '-'}
-                      </td>
-                      <td className="px-3 py-2">
-                        {editingId === p.patientId ? (
-                          <div className="flex items-center gap-1">
-                            <input
-                              type="text"
-                              value={editContent}
-                              onChange={(e) => setEditContent(e.target.value)}
-                              className="flex-1 border rounded px-2 py-1 text-sm"
-                              placeholder="인계사항 입력..."
-                              autoFocus
-                              onKeyDown={(e) => { if (e.key === 'Enter') saveHandover(p.patientId, editContent); }}
-                            />
-                            <button onClick={() => saveHandover(p.patientId, editContent)} disabled={saving}
-                              className="p-1 text-blue-600 hover:bg-blue-50 rounded"><Save size={16} /></button>
-                          </div>
-                        ) : (
-                          <div className="text-slate-600 cursor-pointer hover:text-blue-600"
-                            onClick={() => { setEditingId(p.patientId); setEditContent(p.handover?.content || ''); }}>
-                            {p.handover?.content || <span className="text-slate-300 italic">클릭하여 입력</span>}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        {editingId !== p.patientId && (
-                          <button onClick={() => { setEditingId(p.patientId); setEditContent(p.handover?.content || ''); }}
-                            className="p-1 text-slate-400 hover:text-blue-600 rounded hover:bg-blue-50">
-                            <Plus size={14} />
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {(entries || []).map((p) => {
+                    const patientId = p.patient.id;
+                    const schedules = p.todaySchedule || [];
+                    return (
+                      <tr key={p.admissionId} className="border-b hover:bg-slate-50">
+                        <td className="px-3 py-2">
+                          <div className="font-medium">{p.patient.name}</div>
+                          {p.patient.chartNumber && <div className="text-xs text-slate-400">{p.patient.chartNumber}</div>}
+                        </td>
+                        <td className="px-3 py-2 text-slate-500">
+                          {p.patient.age != null ? `${p.patient.age}/${p.patient.sex || ''}` : '-'}
+                        </td>
+                        <td className="px-3 py-2 text-xs">{p.clinical?.diagnosis || '-'}</td>
+                        <td className="px-3 py-2">
+                          {p.handover?.bloodDraw ? (
+                            <span className="inline-flex items-center px-1.5 py-0.5 bg-red-50 text-red-600 rounded text-xs font-medium">
+                              채혈 {p.handover.bloodDrawNote || ''}
+                            </span>
+                          ) : '-'}
+                        </td>
+                        <td className="px-3 py-2">
+                          {schedules.length > 0 ? (
+                            <div className="space-y-0.5">
+                              {schedules.map((s, i) => (
+                                <span key={i} className="inline-block mr-1 px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-xs">
+                                  {s.type} {s.time}
+                                </span>
+                              ))}
+                            </div>
+                          ) : '-'}
+                        </td>
+                        <td className="px-3 py-2">
+                          {editingId === patientId ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={editContent}
+                                onChange={(e) => setEditContent(e.target.value)}
+                                className="flex-1 border rounded px-2 py-1 text-sm"
+                                placeholder="인계사항 입력..."
+                                autoFocus
+                                onKeyDown={(e) => { if (e.key === 'Enter') saveHandover(patientId, editContent); }}
+                              />
+                              <button onClick={() => saveHandover(patientId, editContent)} disabled={saving}
+                                className="p-1 text-blue-600 hover:bg-blue-50 rounded"><Save size={16} /></button>
+                            </div>
+                          ) : (
+                            <div className="text-slate-600 cursor-pointer hover:text-blue-600"
+                              onClick={() => { setEditingId(patientId); setEditContent(p.handover?.content || ''); }}>
+                              {p.handover?.content || <span className="text-slate-300 italic">클릭하여 입력</span>}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-3 py-2">
+                          {editingId !== patientId && (
+                            <button onClick={() => { setEditingId(patientId); setEditContent(p.handover?.content || ''); }}
+                              className="p-1 text-slate-400 hover:text-blue-600 rounded hover:bg-blue-50">
+                              <Plus size={14} />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -330,17 +345,19 @@ export default function HandoverPage() {
                 <tr className="bg-slate-50 border-b">
                   <th className="px-4 py-2 text-left">이름</th>
                   <th className="px-4 py-2 text-left">차트번호</th>
-                  <th className="px-4 py-2 text-left">병실</th>
+                  <th className="px-4 py-2 text-left">담당의</th>
+                  <th className="px-4 py-2 text-left">진단</th>
                   <th className="px-4 py-2 text-left">퇴원일</th>
                 </tr>
               </thead>
               <tbody>
                 {discharged.map((p) => (
-                  <tr key={p.id} className="border-b hover:bg-slate-50">
+                  <tr key={p.admissionId} className="border-b hover:bg-slate-50">
                     <td className="px-4 py-2 font-medium">{p.name}</td>
-                    <td className="px-4 py-2 text-slate-500">{p.emrPatientId || '-'}</td>
-                    <td className="px-4 py-2">{p.roomName || '-'}</td>
-                    <td className="px-4 py-2 text-slate-500">{p.dischargeDate}</td>
+                    <td className="px-4 py-2 text-slate-500">{p.chartNumber || '-'}</td>
+                    <td className="px-4 py-2">{p.doctor || '-'}</td>
+                    <td className="px-4 py-2 text-xs">{p.diagnosis || '-'}</td>
+                    <td className="px-4 py-2 text-slate-500">{p.dischargeDate || '-'}</td>
                   </tr>
                 ))}
               </tbody>
