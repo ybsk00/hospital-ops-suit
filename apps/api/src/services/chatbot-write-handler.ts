@@ -82,6 +82,8 @@ export async function handleWriteFunction(
   user: any,
   sessionId: string,
 ): Promise<WriteHandlerResult> {
+  console.log(`[ChatbotWrite] Function: ${functionName}, Args:`, JSON.stringify(args));
+
   // ① 권한 체크
   const requiredPermission = FUNCTION_PERMISSION_MAP[functionName];
   if (!requiredPermission) {
@@ -418,6 +420,15 @@ async function handleCreateProcedurePlan(
   user: any,
   sessionId: string,
 ): Promise<WriteHandlerResult> {
+  // 도수/고주파는 전용 함수로 안내
+  const procName = (args.procedureName || '').toLowerCase();
+  if (/도수|수기|물리/.test(procName)) {
+    return { type: 'error', message: '도수치료 예약은 createManualTherapySlot 함수를 사용해야 합니다. 다시 시도해 주세요.' };
+  }
+  if (/고주파|rf|온열/.test(procName)) {
+    return { type: 'error', message: '고주파(RF) 예약은 createRfScheduleSlot 함수를 사용해야 합니다. 다시 시도해 주세요.' };
+  }
+
   // 환자 매칭
   const patientResult = await matchPatient(args.patientName, args.patientId);
   if (patientResult.status === 'notFound') {

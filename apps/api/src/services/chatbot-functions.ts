@@ -942,7 +942,7 @@ const SCHEDULING_READ_FUNCTIONS = [
 const SCHEDULING_WRITE_FUNCTIONS = [
   {
     name: 'createManualTherapySlot',
-    description: '도수치료 예약을 생성합니다. "김아무개 2/28 14시 도수 예약해줘" 형태.',
+    description: '도수치료 예약을 생성합니다. "도수", "도수치료", "도수 예약" 요청은 반드시 이 함수를 사용하세요. createProcedurePlan이 아닌 이 함수입니다.',
     parameters: {
       type: S.OBJECT,
       properties: {
@@ -973,7 +973,7 @@ const SCHEDULING_WRITE_FUNCTIONS = [
   },
   {
     name: 'createRfScheduleSlot',
-    description: '고주파(RF) 치료 예약을 생성합니다.',
+    description: '고주파(RF) 치료 예약을 생성합니다. "고주파", "RF", "온열" 예약 요청은 반드시 이 함수를 사용하세요. createProcedurePlan이 아닌 이 함수입니다.',
     parameters: {
       type: S.OBJECT,
       properties: {
@@ -1053,7 +1053,7 @@ const WRITE_FUNCTIONS = [
   },
   {
     name: 'createProcedurePlan',
-    description: '처치예약 생성. 도수/RF/O2/주사 등.',
+    description: '처치계획 생성. O2(산소치료), 주사, 레이저 전용. 도수치료는 createManualTherapySlot, 고주파/RF는 createRfScheduleSlot을 사용하세요.',
     parameters: {
       type: S.OBJECT,
       properties: {
