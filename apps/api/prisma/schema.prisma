@@ -122,6 +122,8 @@ model User {
   labAnalysisApprovals  LabAnalysis[]          @relation("LabAnalysisApprover")
   pendingActions        PendingAction[]                            // Phase 7
   staffDayNotes         StaffDayNote[]      @relation("StaffNoteCreator") // Phase 8
+  handoverEntries       HandoverEntry[]     @relation("HandoverCreator") // Phase 8E
+  rfEvaluations         RfTreatmentEvaluation[] @relation("RfEvalCreator") // Phase 8E
 }
 
 model UserDepartment {
@@ -169,6 +171,9 @@ model Patient {
   aiReports           AiReport[]
   manualTherapySlots  ManualTherapySlot[]  // Phase 8
   rfScheduleSlots     RfScheduleSlot[]     // Phase 8
+  clinicalInfo        PatientClinicalInfo? // Phase 8E
+  handoverEntries     HandoverEntry[]      // Phase 8E
+  rfTreatmentEvals    RfTreatmentEvaluation[] // Phase 8E
 }
 
 // ============================================================
@@ -1088,6 +1093,8 @@ model RfScheduleSlot {
   updatedAt     DateTime          @updatedAt
   deletedAt     DateTime?
 
+  evaluations   RfTreatmentEvaluation[] // Phase 8E
+
   @@index([roomId, date])
   @@index([patientId, date])
   @@index([date, status])
@@ -1106,4 +1113,94 @@ model StaffDayNote {
   updatedAt   DateTime @updatedAt
 
   @@index([noteType, date])
+}
+
+// ============================================================
+// Phase 8E: 병실예약현황 + 인계장 + 고주파치료평가
+// ============================================================
+
+// ── 환자 임상 프로필 (인계장용) ──
+model PatientClinicalInfo {
+  id                String   @id @default(uuid())
+  patientId         String   @unique
+  patient           Patient  @relation(fields: [patientId], references: [id])
+  diagnosis         String?              // 진단명 (췌장암, 간암 등)
+  referralHospital  String?              // 전원 병원
+  chemoPort         String?              // 케모포트 IN/OUT, PICC, 유리백
+  surgeryHistory    String?  @db.Text    // 수술 이력
+  metastasis        String?              // 전이 부위
+  ctxHistory        String?  @db.Text    // 항암치료 이력
+  rtHistory         String?  @db.Text    // 방사선 이력
+  bloodDrawSchedule String?              // 정기 채혈 스케줄
+  guardianInfo      String?              // 보호자 정보
+  notes             String?  @db.Text    // 기타 참고사항
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// ── 인계 기록 ──
+model HandoverEntry {
+  id              String   @id @default(uuid())
+  patientId       String
+  patient         Patient  @relation(fields: [patientId], references: [id])
+  date            DateTime @db.Date
+  roomNumber      String?              // 병실 번호
+  doctorCode      String?              // 담당의 코드 (J, C)
+
+  // 당일 상태
+  bloodDraw       Boolean  @default(false)
+  bloodDrawNote   String?
+  chemoNote       String?              // 항암 메모
+  externalVisit   String?              // 외진 예정
+  outing          String?              // 외출 메모
+  returnTime      String?              // 귀원 시간
+  treatmentDate   String?              // 치료일자 메모
+
+  // 인계사항
+  content         String?  @db.Text
+
+  createdById     String
+  createdBy       User     @relation("HandoverCreator", fields: [createdById], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
+
+  @@unique([patientId, date])
+  @@index([date, roomNumber])
+  @@index([date, doctorCode])
+}
+
+// ── 고주파 치료 평가 ──
+model RfTreatmentEvaluation {
+  id              String      @id @default(uuid())
+  rfSlotId        String?
+  rfSlot          RfScheduleSlot? @relation(fields: [rfSlotId], references: [id])
+  patientId       String
+  patient         Patient     @relation(fields: [patientId], references: [id])
+  chartNumber     String?                          // 차트번호
+  patientType     PatientType @default(INPATIENT)
+  diagnosis       String?                          // 진단명
+
+  // 치료 데이터
+  probeType       String?                          // 도자: A, B
+  outputPercent   Int?                             // 출력 %
+  temperature     Float?                           // 온도 ℃
+  treatmentTime   Int?                             // 처치시간 (분)
+  ivTreatment     String?                          // 수액처치
+
+  // 피드백
+  patientIssue    String?     @db.Text             // 환자이슈/후기
+  doctorCode      String?                          // 담당의
+  roomNumber      String?                          // 방/기계번호
+
+  evaluatedAt     DateTime    @default(now())
+  createdById     String?
+  createdBy       User?       @relation("RfEvalCreator", fields: [createdById], references: [id])
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  deletedAt       DateTime?
+
+  @@index([patientId, evaluatedAt])
+  @@index([evaluatedAt])
+  @@index([doctorCode, evaluatedAt])
 }

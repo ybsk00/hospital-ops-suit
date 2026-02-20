@@ -37,6 +37,12 @@ const FUNCTION_PERMISSION_MAP: Record<string, { resource: PermissionResource; ac
   createRfScheduleSlot: { resource: 'SCHEDULING', action: 'WRITE' },
   modifyRfScheduleSlot: { resource: 'SCHEDULING', action: 'WRITE' },
   cancelRfScheduleSlot: { resource: 'SCHEDULING', action: 'WRITE' },
+  // Phase 8E: 인계장 + 임상정보 + 고주파평가
+  createHandoverEntry: { resource: 'SCHEDULING', action: 'WRITE' },
+  modifyHandoverEntry: { resource: 'SCHEDULING', action: 'WRITE' },
+  cancelHandoverEntry: { resource: 'SCHEDULING', action: 'WRITE' },
+  updateClinicalInfo: { resource: 'SCHEDULING', action: 'WRITE' },
+  createRfEvaluation: { resource: 'SCHEDULING', action: 'WRITE' },
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -126,6 +132,17 @@ export async function handleWriteFunction(
       return handleModifyRfScheduleSlot(args, user, sessionId);
     case 'cancelRfScheduleSlot':
       return handleCancelRfScheduleSlot(args, user, sessionId);
+    // Phase 8E
+    case 'createHandoverEntry':
+      return handleCreateHandoverEntry(args, user, sessionId);
+    case 'modifyHandoverEntry':
+      return handleModifyHandoverEntry(args, user, sessionId);
+    case 'cancelHandoverEntry':
+      return handleCancelHandoverEntry(args, user, sessionId);
+    case 'updateClinicalInfo':
+      return handleUpdateClinicalInfo(args, user, sessionId);
+    case 'createRfEvaluation':
+      return handleCreateRfEvaluation(args, user, sessionId);
     default:
       return { type: 'error', message: `처리할 수 없는 함수: ${functionName}` };
   }
@@ -1043,6 +1060,168 @@ export async function confirmPendingAction(
         break;
       }
 
+      // Phase 8E: 인계장
+      case 'createHandoverEntry': {
+        const entry = await prisma.handoverEntry.upsert({
+          where: {
+            patientId_date: {
+              patientId: payload.patientId,
+              date: new Date(payload.date),
+            },
+          },
+          create: {
+            patientId: payload.patientId,
+            date: new Date(payload.date),
+            roomNumber: payload.roomNumber || null,
+            doctorCode: payload.doctorCode || null,
+            bloodDraw: payload.bloodDraw || false,
+            bloodDrawNote: payload.bloodDrawNote || null,
+            chemoNote: payload.chemoNote || null,
+            externalVisit: payload.externalVisit || null,
+            outing: payload.outing || null,
+            returnTime: payload.returnTime || null,
+            content: payload.content || null,
+            createdById: pending.createdBy,
+          },
+          update: {
+            roomNumber: payload.roomNumber || undefined,
+            doctorCode: payload.doctorCode || undefined,
+            bloodDraw: payload.bloodDraw ?? undefined,
+            bloodDrawNote: payload.bloodDrawNote || undefined,
+            chemoNote: payload.chemoNote || undefined,
+            externalVisit: payload.externalVisit || undefined,
+            outing: payload.outing || undefined,
+            returnTime: payload.returnTime || undefined,
+            content: payload.content || undefined,
+          },
+        });
+
+        resultId = entry.id;
+        resultType = 'HandoverEntry';
+
+        notifyDepartments('booking:created', {
+          type: 'handover',
+          id: entry.id,
+          patientId: payload.patientId,
+          date: payload.date,
+        });
+        break;
+      }
+
+      case 'modifyHandoverEntry': {
+        const updateHandover: any = {};
+        if (payload.content !== undefined) updateHandover.content = payload.content;
+        if (payload.bloodDraw !== undefined) updateHandover.bloodDraw = payload.bloodDraw;
+        if (payload.bloodDrawNote !== undefined) updateHandover.bloodDrawNote = payload.bloodDrawNote;
+        if (payload.chemoNote !== undefined) updateHandover.chemoNote = payload.chemoNote;
+        if (payload.externalVisit !== undefined) updateHandover.externalVisit = payload.externalVisit;
+        if (payload.outing !== undefined) updateHandover.outing = payload.outing;
+        if (payload.returnTime !== undefined) updateHandover.returnTime = payload.returnTime;
+
+        await prisma.handoverEntry.update({
+          where: { id: payload.entryId },
+          data: updateHandover,
+        });
+
+        resultId = payload.entryId;
+        resultType = 'HandoverEntry';
+
+        notifyDepartments('booking:modified', {
+          type: 'handover',
+          id: payload.entryId,
+        });
+        break;
+      }
+
+      case 'cancelHandoverEntry': {
+        await prisma.handoverEntry.update({
+          where: { id: payload.entryId },
+          data: { deletedAt: new Date() },
+        });
+
+        resultId = payload.entryId;
+        resultType = 'HandoverEntry';
+
+        notifyDepartments('booking:cancelled', {
+          type: 'handover',
+          id: payload.entryId,
+        });
+        break;
+      }
+
+      case 'updateClinicalInfo': {
+        const info = await prisma.patientClinicalInfo.upsert({
+          where: { patientId: payload.patientId },
+          create: {
+            patientId: payload.patientId,
+            diagnosis: payload.diagnosis || null,
+            referralHospital: payload.referralHospital || null,
+            chemoPort: payload.chemoPort || null,
+            surgeryHistory: payload.surgeryHistory || null,
+            metastasis: payload.metastasis || null,
+            ctxHistory: payload.ctxHistory || null,
+            rtHistory: payload.rtHistory || null,
+            bloodDrawSchedule: payload.bloodDrawSchedule || null,
+            guardianInfo: payload.guardianInfo || null,
+            notes: payload.notes || null,
+          },
+          update: {
+            diagnosis: payload.diagnosis ?? undefined,
+            referralHospital: payload.referralHospital ?? undefined,
+            chemoPort: payload.chemoPort ?? undefined,
+            surgeryHistory: payload.surgeryHistory ?? undefined,
+            metastasis: payload.metastasis ?? undefined,
+            ctxHistory: payload.ctxHistory ?? undefined,
+            rtHistory: payload.rtHistory ?? undefined,
+            bloodDrawSchedule: payload.bloodDrawSchedule ?? undefined,
+            guardianInfo: payload.guardianInfo ?? undefined,
+            notes: payload.notes ?? undefined,
+          },
+        });
+
+        resultId = info.id;
+        resultType = 'PatientClinicalInfo';
+
+        notifyDepartments('booking:modified', {
+          type: 'clinicalInfo',
+          id: info.id,
+          patientId: payload.patientId,
+        });
+        break;
+      }
+
+      case 'createRfEvaluation': {
+        const evaluation = await prisma.rfTreatmentEvaluation.create({
+          data: {
+            patientId: payload.patientId,
+            chartNumber: payload.chartNumber || null,
+            patientType: payload.patientType || 'INPATIENT',
+            diagnosis: payload.diagnosis || null,
+            probeType: payload.probeType || null,
+            outputPercent: payload.outputPercent ?? null,
+            temperature: payload.temperature ?? null,
+            treatmentTime: payload.treatmentTime ?? null,
+            ivTreatment: payload.ivTreatment || null,
+            patientIssue: payload.patientIssue || null,
+            doctorCode: payload.doctorCode || null,
+            roomNumber: payload.roomNumber || null,
+            rfSlotId: payload.rfSlotId || null,
+            evaluatedAt: payload.evaluatedAt ? new Date(payload.evaluatedAt) : new Date(),
+            createdById: pending.createdBy,
+          },
+        });
+
+        resultId = evaluation.id;
+        resultType = 'RfTreatmentEvaluation';
+
+        notifyDepartments('booking:created', {
+          type: 'rfEvaluation',
+          id: evaluation.id,
+          patientId: payload.patientId,
+        });
+        break;
+      }
+
       default:
         return { success: false, message: `알 수 없는 작업 유형: ${pending.actionType}` };
     }
@@ -1870,6 +2049,388 @@ async function handleCancelRfScheduleSlot(
   return {
     type: 'confirm',
     message: `${displayData.patientName} 환자의 ${displayData.date} ${displayData.time} 고주파를 취소합니다. 확인해 주세요.`,
+    pendingId: pending.id,
+    displayData,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  인계 기록 생성 (Phase 8E)
+// ═══════════════════════════════════════════════════════════
+
+async function handleCreateHandoverEntry(
+  args: Record<string, any>,
+  user: any,
+  sessionId: string,
+): Promise<WriteHandlerResult> {
+  const patientResult = await matchPatient(args.patientName, args.patientId);
+  if (patientResult.status === 'notFound') {
+    return { type: 'error', message: `"${patientResult.searchTerm}" 환자를 찾을 수 없습니다.` };
+  }
+  if (patientResult.status === 'multiple') {
+    return {
+      type: 'disambiguation',
+      message: `"${args.patientName}" 이름의 환자가 여러 명입니다. 선택해 주세요.`,
+      patients: patientResult.patients.map((p) => ({ id: p.id, name: p.name, emrId: p.emrPatientId, dob: p.dob })),
+    };
+  }
+
+  const patient = patientResult.patient;
+  const date = args.date || new Date().toISOString().slice(0, 10);
+
+  // 병실 정보: 입원 중이면 자동으로
+  let roomNumber = args.roomNumber;
+  if (!roomNumber) {
+    const admission = await prisma.admission.findFirst({
+      where: { patientId: patient.id, deletedAt: null, status: { not: 'DISCHARGED' } },
+      include: { currentBed: { include: { room: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (admission?.currentBed?.room) {
+      roomNumber = admission.currentBed.room.name;
+    }
+  }
+
+  const displayData = {
+    actionLabel: '인계 기록 생성',
+    patientName: patient.name,
+    patientEmrId: patient.emrPatientId,
+    date,
+    roomNumber: roomNumber || '미지정',
+    content: args.content || null,
+    bloodDraw: args.bloodDraw || false,
+    bloodDrawNote: args.bloodDrawNote || null,
+    chemoNote: args.chemoNote || null,
+    externalVisit: args.externalVisit || null,
+    outing: args.outing || null,
+  };
+
+  const pending = await prisma.pendingAction.create({
+    data: {
+      sessionId,
+      actionType: 'createHandoverEntry',
+      payload: {
+        patientId: patient.id,
+        date,
+        roomNumber,
+        doctorCode: args.doctorCode || null,
+        bloodDraw: args.bloodDraw || false,
+        bloodDrawNote: args.bloodDrawNote || null,
+        chemoNote: args.chemoNote || null,
+        externalVisit: args.externalVisit || null,
+        outing: args.outing || null,
+        returnTime: args.returnTime || null,
+        content: args.content || null,
+      },
+      displayData,
+      status: 'PENDING',
+      createdBy: user.id,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    },
+  });
+
+  return {
+    type: 'confirm',
+    message: `${patient.name} 환자의 ${date} 인계 기록을 생성합니다. 확인해 주세요.`,
+    pendingId: pending.id,
+    displayData,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  인계 기록 수정 (Phase 8E)
+// ═══════════════════════════════════════════════════════════
+
+async function handleModifyHandoverEntry(
+  args: Record<string, any>,
+  user: any,
+  sessionId: string,
+): Promise<WriteHandlerResult> {
+  const patientResult = await matchPatient(args.patientName, args.patientId);
+  if (patientResult.status === 'notFound') {
+    return { type: 'error', message: `"${patientResult.searchTerm}" 환자를 찾을 수 없습니다.` };
+  }
+  if (patientResult.status === 'multiple') {
+    return {
+      type: 'disambiguation',
+      message: `"${args.patientName}" 이름의 환자가 여러 명입니다. 선택해 주세요.`,
+      patients: patientResult.patients.map((p) => ({ id: p.id, name: p.name, emrId: p.emrPatientId, dob: p.dob })),
+    };
+  }
+
+  const patient = patientResult.patient;
+  const date = args.date || new Date().toISOString().slice(0, 10);
+
+  const existingEntry = await prisma.handoverEntry.findFirst({
+    where: { patientId: patient.id, date: new Date(date), deletedAt: null },
+  });
+
+  if (!existingEntry) {
+    return { type: 'error', message: `${patient.name} 환자의 ${date} 인계 기록을 찾을 수 없습니다.` };
+  }
+
+  const displayData = {
+    actionLabel: '인계 기록 수정',
+    patientName: patient.name,
+    date,
+    content: args.content ?? existingEntry.content,
+    bloodDraw: args.bloodDraw ?? existingEntry.bloodDraw,
+    chemoNote: args.chemoNote ?? existingEntry.chemoNote,
+    outing: args.outing ?? existingEntry.outing,
+  };
+
+  const pending = await prisma.pendingAction.create({
+    data: {
+      sessionId,
+      actionType: 'modifyHandoverEntry',
+      payload: {
+        entryId: existingEntry.id,
+        content: args.content,
+        bloodDraw: args.bloodDraw,
+        bloodDrawNote: args.bloodDrawNote,
+        chemoNote: args.chemoNote,
+        externalVisit: args.externalVisit,
+        outing: args.outing,
+        returnTime: args.returnTime,
+      },
+      displayData,
+      status: 'PENDING',
+      createdBy: user.id,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    },
+  });
+
+  return {
+    type: 'confirm',
+    message: `${patient.name} 환자의 ${date} 인계 기록을 수정합니다. 확인해 주세요.`,
+    pendingId: pending.id,
+    displayData,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  인계 기록 삭제 (Phase 8E)
+// ═══════════════════════════════════════════════════════════
+
+async function handleCancelHandoverEntry(
+  args: Record<string, any>,
+  user: any,
+  sessionId: string,
+): Promise<WriteHandlerResult> {
+  const patientResult = await matchPatient(args.patientName, args.patientId);
+  if (patientResult.status === 'notFound') {
+    return { type: 'error', message: `"${patientResult.searchTerm}" 환자를 찾을 수 없습니다.` };
+  }
+  if (patientResult.status === 'multiple') {
+    return {
+      type: 'disambiguation',
+      message: `"${args.patientName}" 이름의 환자가 여러 명입니다. 선택해 주세요.`,
+      patients: patientResult.patients.map((p) => ({ id: p.id, name: p.name, emrId: p.emrPatientId, dob: p.dob })),
+    };
+  }
+
+  const patient = patientResult.patient;
+  const date = args.date || new Date().toISOString().slice(0, 10);
+
+  const existingEntry = await prisma.handoverEntry.findFirst({
+    where: { patientId: patient.id, date: new Date(date), deletedAt: null },
+  });
+
+  if (!existingEntry) {
+    return { type: 'error', message: `${patient.name} 환자의 ${date} 인계 기록을 찾을 수 없습니다.` };
+  }
+
+  const displayData = {
+    actionLabel: '인계 기록 삭제',
+    patientName: patient.name,
+    date,
+    reason: args.reason || null,
+  };
+
+  const pending = await prisma.pendingAction.create({
+    data: {
+      sessionId,
+      actionType: 'cancelHandoverEntry',
+      payload: {
+        entryId: existingEntry.id,
+        reason: args.reason,
+      },
+      displayData,
+      status: 'PENDING',
+      createdBy: user.id,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    },
+  });
+
+  return {
+    type: 'confirm',
+    message: `${patient.name} 환자의 ${date} 인계 기록을 삭제합니다. 확인해 주세요.`,
+    pendingId: pending.id,
+    displayData,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  임상 프로필 업데이트 (Phase 8E)
+// ═══════════════════════════════════════════════════════════
+
+async function handleUpdateClinicalInfo(
+  args: Record<string, any>,
+  user: any,
+  sessionId: string,
+): Promise<WriteHandlerResult> {
+  const patientResult = await matchPatient(args.patientName, args.patientId);
+  if (patientResult.status === 'notFound') {
+    return { type: 'error', message: `"${patientResult.searchTerm}" 환자를 찾을 수 없습니다.` };
+  }
+  if (patientResult.status === 'multiple') {
+    return {
+      type: 'disambiguation',
+      message: `"${args.patientName}" 이름의 환자가 여러 명입니다. 선택해 주세요.`,
+      patients: patientResult.patients.map((p) => ({ id: p.id, name: p.name, emrId: p.emrPatientId, dob: p.dob })),
+    };
+  }
+
+  const patient = patientResult.patient;
+
+  const fields: string[] = [];
+  if (args.diagnosis) fields.push(`진단: ${args.diagnosis}`);
+  if (args.referralHospital) fields.push(`전원: ${args.referralHospital}`);
+  if (args.chemoPort) fields.push(`케모포트: ${args.chemoPort}`);
+  if (args.metastasis) fields.push(`전이: ${args.metastasis}`);
+  if (args.surgeryHistory) fields.push(`수술이력`);
+  if (args.ctxHistory) fields.push(`항암이력`);
+  if (args.rtHistory) fields.push(`방사선이력`);
+  if (args.bloodDrawSchedule) fields.push(`채혈: ${args.bloodDrawSchedule}`);
+  if (args.guardianInfo) fields.push(`보호자: ${args.guardianInfo}`);
+
+  const displayData = {
+    actionLabel: '임상 프로필 업데이트',
+    patientName: patient.name,
+    patientEmrId: patient.emrPatientId,
+    updatedFields: fields.join(', ') || '변경 없음',
+    diagnosis: args.diagnosis || null,
+  };
+
+  const pending = await prisma.pendingAction.create({
+    data: {
+      sessionId,
+      actionType: 'updateClinicalInfo',
+      payload: {
+        patientId: patient.id,
+        diagnosis: args.diagnosis,
+        referralHospital: args.referralHospital,
+        chemoPort: args.chemoPort,
+        surgeryHistory: args.surgeryHistory,
+        metastasis: args.metastasis,
+        ctxHistory: args.ctxHistory,
+        rtHistory: args.rtHistory,
+        bloodDrawSchedule: args.bloodDrawSchedule,
+        guardianInfo: args.guardianInfo,
+        notes: args.notes,
+      },
+      displayData,
+      status: 'PENDING',
+      createdBy: user.id,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    },
+  });
+
+  return {
+    type: 'confirm',
+    message: `${patient.name} 환자의 임상 프로필을 업데이트합니다 (${fields.join(', ')}). 확인해 주세요.`,
+    pendingId: pending.id,
+    displayData,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  고주파 치료 평가 생성 (Phase 8E)
+// ═══════════════════════════════════════════════════════════
+
+async function handleCreateRfEvaluation(
+  args: Record<string, any>,
+  user: any,
+  sessionId: string,
+): Promise<WriteHandlerResult> {
+  const patientResult = await matchPatient(args.patientName, args.patientId);
+  if (patientResult.status === 'notFound') {
+    return { type: 'error', message: `"${patientResult.searchTerm}" 환자를 찾을 수 없습니다.` };
+  }
+  if (patientResult.status === 'multiple') {
+    return {
+      type: 'disambiguation',
+      message: `"${args.patientName}" 이름의 환자가 여러 명입니다. 선택해 주세요.`,
+      patients: patientResult.patients.map((p) => ({ id: p.id, name: p.name, emrId: p.emrPatientId, dob: p.dob })),
+    };
+  }
+
+  const patient = patientResult.patient;
+
+  // 오늘 RF 슬롯이 있으면 자동으로 연결
+  let rfSlotId: string | null = null;
+  const today = new Date().toISOString().slice(0, 10);
+  const evalDate = args.evaluatedAt || today;
+  const todaySlot = await prisma.rfScheduleSlot.findFirst({
+    where: {
+      patientId: patient.id,
+      date: new Date(evalDate),
+      deletedAt: null,
+      status: { not: 'CANCELLED' },
+    },
+  });
+  if (todaySlot) rfSlotId = todaySlot.id;
+
+  const displayData = {
+    actionLabel: '고주파 치료 평가',
+    patientName: patient.name,
+    patientEmrId: patient.emrPatientId,
+    evaluatedAt: evalDate,
+    probeType: args.probeType || null,
+    outputPercent: args.outputPercent ?? null,
+    temperature: args.temperature ?? null,
+    treatmentTime: args.treatmentTime ?? null,
+    ivTreatment: args.ivTreatment || null,
+    patientIssue: args.patientIssue || null,
+    doctorCode: args.doctorCode || null,
+  };
+
+  const pending = await prisma.pendingAction.create({
+    data: {
+      sessionId,
+      actionType: 'createRfEvaluation',
+      payload: {
+        patientId: patient.id,
+        chartNumber: patient.emrPatientId,
+        patientType: args.patientType || 'INPATIENT',
+        diagnosis: args.diagnosis || null,
+        probeType: args.probeType || null,
+        outputPercent: args.outputPercent ?? null,
+        temperature: args.temperature ?? null,
+        treatmentTime: args.treatmentTime ?? null,
+        ivTreatment: args.ivTreatment || null,
+        patientIssue: args.patientIssue || null,
+        doctorCode: args.doctorCode || null,
+        roomNumber: args.roomNumber || null,
+        rfSlotId,
+        evaluatedAt: evalDate,
+      },
+      displayData,
+      status: 'PENDING',
+      createdBy: user.id,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    },
+  });
+
+  const details: string[] = [];
+  if (args.probeType) details.push(`도자${args.probeType}`);
+  if (args.outputPercent != null) details.push(`출력${args.outputPercent}%`);
+  if (args.temperature != null) details.push(`${args.temperature}℃`);
+  if (args.treatmentTime != null) details.push(`${args.treatmentTime}분`);
+
+  return {
+    type: 'confirm',
+    message: `${patient.name} 환자의 고주파 치료 평가를 기록합니다${details.length ? ` (${details.join(', ')})` : ''}. 확인해 주세요.`,
     pendingId: pending.id,
     displayData,
   };

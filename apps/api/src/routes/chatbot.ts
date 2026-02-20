@@ -124,6 +124,29 @@ ${now} (오늘: ${today})
 - "변경/수정/옮겨줘/바꿔줘" 키워드 → modify 함수 사용
 - 필수: patientName. 선택: newDate, newTime, newRoomName, newDuration, newDoctorCode, reason
 
+[인계장 — createHandoverEntry / modifyHandoverEntry / cancelHandoverEntry]
+- "김아무개 인계사항 작성: 채혈 완료, 오후 외출 예정" → createHandoverEntry 호출
+- "김아무개 오늘 인계 수정: 외출 취소됨" → modifyHandoverEntry 호출
+- "김아무개 2/20 인계 삭제해줘" → cancelHandoverEntry 호출
+- 필수: patientName. 선택: date(기본 오늘), content, bloodDraw, bloodDrawNote, chemoNote, externalVisit, outing, returnTime, doctorCode, roomNumber
+- 인계 "작성/등록/생성" = createHandoverEntry, "수정/변경" = modifyHandoverEntry, "삭제/취소" = cancelHandoverEntry
+
+[임상 프로필 — updateClinicalInfo]
+- "김아무개 진단명 췌장암으로 등록해줘" → updateClinicalInfo 호출
+- "김아무개 전이 부위: 간, 폐" → updateClinicalInfo 호출
+- 필수: patientName. 선택: diagnosis, referralHospital, chemoPort, surgeryHistory, metastasis, ctxHistory, rtHistory, bloodDrawSchedule, guardianInfo, notes
+- 여러 필드를 한번에 업데이트 가능
+
+[고주파 치료 평가 — createRfEvaluation]
+- "김아무개 고주파 평가: 도자A, 출력100%, 온도39도, 120분" → createRfEvaluation 호출
+- 필수: patientName. 선택: probeType(A/B), outputPercent(0-100), temperature, treatmentTime(분), ivTreatment, patientIssue, doctorCode, roomNumber, evaluatedAt(기본 오늘)
+- 당일 RF 스케줄 슬롯이 있으면 자동 연결
+
+[회진 준비 — getRoundPrep]
+- "이찬용 원장 회진 준비 데이터 보여줘" → getRoundPrep 호출
+- "오늘 회진 준비" → getRoundPrep 호출
+- 선택: date(기본 오늘), doctorCode
+
 [취소/변경 시 예약 유형이 불명확한 경우 — findPatientBookings]
 - "유범석 취소해줘", "유범석 예약 취소", "2월20일 유범석 취소" 등 예약 유형(도수/고주파/외래)이 명시되지 않은 경우:
   → 반드시 findPatientBookings(patientName, date?)를 먼저 호출하여 해당 환자의 예약을 조회

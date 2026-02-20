@@ -24,6 +24,8 @@ import {
   Hand,
   Zap,
   ClipboardList,
+  DoorOpen,
+  FileCheck,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth';
 
@@ -40,6 +42,9 @@ const navItems = [
   { href: '/dashboard/imports', label: 'Import 현황', icon: Upload },
   { href: '/dashboard/scheduling/manual-therapy', label: '도수예약', icon: Hand },
   { href: '/dashboard/scheduling/rf-schedule', label: '고주파예약', icon: Zap },
+  { href: '/dashboard/room-booking', label: '병실현황', icon: DoorOpen },
+  { href: '/dashboard/handover', label: '인계장', icon: ClipboardList },
+  { href: '/dashboard/rf-evaluation', label: '고주파평가', icon: FileCheck },
   { href: '/dashboard/audit', label: '감사로그', icon: ScrollText },
   { href: '/dashboard/marketing', label: '마케팅 관리', icon: Megaphone },
   { href: '/dashboard/marketing/chatbot', label: '└ 챗봇 콘텐츠', icon: MessageCircle },

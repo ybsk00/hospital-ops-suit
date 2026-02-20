@@ -907,7 +907,294 @@ export async function getTodayScheduleOverview() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  Gemini Function Declarations (32개)
+//  READ: 병실현황 + 인계장 + 고주파평가 (Phase 8E, 7개)
+// ═══════════════════════════════════════════════════════════
+
+function toDateStrChat(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// ─── 21. 병실별 일간 스케줄 ───
+export async function getRoomBookingDaily(args: Record<string, any>) {
+  const dateStr = args.date || toDateStrChat(new Date());
+  const targetDate = new Date(dateStr + 'T00:00:00');
+  const nextDate = new Date(targetDate);
+  nextDate.setDate(nextDate.getDate() + 1);
+
+  const admissions = await prisma.admission.findMany({
+    where: {
+      status: { in: ['ADMITTED', 'DISCHARGE_PLANNED', 'ON_LEAVE'] },
+      admitDate: { lte: nextDate },
+      OR: [{ dischargeDate: null }, { dischargeDate: { gte: targetDate } }],
+      deletedAt: null,
+    },
+    include: {
+      patient: { select: { id: true, name: true, emrPatientId: true } },
+      attendingDoctor: { select: { name: true } },
+      currentBed: { include: { room: true } },
+    },
+  });
+
+  const [manualSlots, rfSlots] = await Promise.all([
+    prisma.manualTherapySlot.findMany({
+      where: { date: targetDate, status: { not: 'CANCELLED' }, deletedAt: null },
+      include: { therapist: { select: { name: true } } },
+    }),
+    prisma.rfScheduleSlot.findMany({
+      where: { date: targetDate, status: { not: 'CANCELLED' }, deletedAt: null },
+      include: { room: { select: { name: true } } },
+    }),
+  ]);
+
+  const schedMap: Record<string, string[]> = {};
+  for (const s of manualSlots) {
+    if (s.patientId) {
+      if (!schedMap[s.patientId]) schedMap[s.patientId] = [];
+      schedMap[s.patientId].push(`${s.timeSlot} 도수(${s.therapist.name})`);
+    }
+  }
+  for (const s of rfSlots) {
+    if (s.patientId) {
+      if (!schedMap[s.patientId]) schedMap[s.patientId] = [];
+      schedMap[s.patientId].push(`${s.startTime} 고주파(${s.room.name}번)`);
+    }
+  }
+
+  const rooms = admissions.map(adm => ({
+    room: adm.currentBed?.room?.name || '미배정',
+    bed: adm.currentBed?.label || '-',
+    patient: adm.patient.name,
+    chartNumber: adm.patient.emrPatientId,
+    doctor: adm.attendingDoctor?.name,
+    schedules: schedMap[adm.patient.id] || [],
+  }));
+
+  return { date: dateStr, totalPatients: rooms.length, rooms };
+}
+
+// ─── 22. 병실 가용성 ───
+export async function getRoomAvailability() {
+  const rooms = await prisma.room.findMany({
+    where: { isActive: true, deletedAt: null },
+    include: {
+      beds: {
+        where: { isActive: true, deletedAt: null },
+        include: {
+          currentAdmission: {
+            select: { plannedDischargeDate: true, patient: { select: { name: true } } },
+          },
+        },
+      },
+    },
+    orderBy: { name: 'asc' },
+  });
+
+  const result = rooms.map(r => {
+    const beds = r.beds.map(b => {
+      if (b.status === 'EMPTY') return { bed: b.label, status: '입실 가능' };
+      if (b.status === 'OCCUPIED' && b.currentAdmission) {
+        const discharge = b.currentAdmission.plannedDischargeDate;
+        return {
+          bed: b.label,
+          status: '입원중',
+          patient: b.currentAdmission.patient?.name,
+          availableDate: discharge ? toDateStrChat(new Date(discharge)) : '미정',
+        };
+      }
+      return { bed: b.label, status: b.status };
+    });
+    const empty = beds.filter(b => b.status === '입실 가능').length;
+    return { room: r.name, capacity: r.capacity, emptyBeds: empty, beds };
+  });
+
+  const totalEmpty = result.reduce((s, r) => s + r.emptyBeds, 0);
+  return { totalEmpty, rooms: result };
+}
+
+// ─── 23. 월간 입원/퇴원 카운트 ───
+export async function getRoomBookingMonthly(args: Record<string, any>) {
+  const now = new Date();
+  const year = parseInt(args.year) || now.getFullYear();
+  const month = parseInt(args.month) || (now.getMonth() + 1);
+  const startDate = new Date(year, month - 1, 1);
+  const endDate = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month, 0).getDate();
+
+  const admissions = await prisma.admission.findMany({
+    where: {
+      admitDate: { lt: endDate },
+      OR: [{ dischargeDate: null }, { dischargeDate: { gte: startDate } }],
+      deletedAt: null,
+    },
+    select: { admitDate: true, dischargeDate: true },
+  });
+
+  const days: Array<{ date: string; inHospital: number; admitted: number; discharged: number }> = [];
+  for (let day = 1; day <= daysInMonth; day++) {
+    const d = toDateStrChat(new Date(year, month - 1, day));
+    let inHospital = 0, admitted = 0, discharged = 0;
+    for (const a of admissions) {
+      const ad = toDateStrChat(new Date(a.admitDate));
+      const dd = a.dischargeDate ? toDateStrChat(new Date(a.dischargeDate)) : null;
+      if (ad <= d && (!dd || dd >= d)) inHospital++;
+      if (ad === d) admitted++;
+      if (dd === d) discharged++;
+    }
+    days.push({ date: d, inHospital, admitted, discharged });
+  }
+
+  return { year, month, days };
+}
+
+// ─── 24. 인계장 조회 ───
+export async function getHandoverDaily(args: Record<string, any>) {
+  const dateStr = args.date || toDateStrChat(new Date());
+  const targetDate = new Date(dateStr + 'T00:00:00');
+  const nextDate = new Date(targetDate);
+  nextDate.setDate(nextDate.getDate() + 1);
+
+  const admissions = await prisma.admission.findMany({
+    where: {
+      status: { in: ['ADMITTED', 'DISCHARGE_PLANNED', 'ON_LEAVE'] },
+      admitDate: { lte: nextDate },
+      OR: [{ dischargeDate: null }, { dischargeDate: { gte: targetDate } }],
+      deletedAt: null,
+    },
+    include: {
+      patient: { select: { id: true, name: true, emrPatientId: true, clinicalInfo: true } },
+      attendingDoctor: { select: { name: true } },
+      currentBed: { include: { room: true } },
+    },
+  });
+
+  const entries = await prisma.handoverEntry.findMany({
+    where: { date: targetDate, deletedAt: null },
+  });
+  const entryMap = new Map(entries.map(e => [e.patientId, e]));
+
+  const patients = admissions.map(adm => {
+    const e = entryMap.get(adm.patient.id);
+    const ci = adm.patient.clinicalInfo;
+    return {
+      room: adm.currentBed?.room?.name || '미배정',
+      name: adm.patient.name,
+      chartNumber: adm.patient.emrPatientId,
+      doctor: adm.attendingDoctor?.name,
+      diagnosis: ci?.diagnosis || '',
+      chemoPort: ci?.chemoPort || '',
+      bloodDraw: e?.bloodDraw || false,
+      chemo: e?.chemoNote || '',
+      externalVisit: e?.externalVisit || '',
+      outing: e?.outing || '',
+      handover: e?.content || '',
+    };
+  });
+
+  return { date: dateStr, totalPatients: patients.length, patients };
+}
+
+// ─── 25. 환자 임상 프로필 조회 ───
+export async function getPatientClinicalInfo(args: Record<string, any>) {
+  const patient = await prisma.patient.findFirst({
+    where: { name: { contains: args.patientName }, deletedAt: null },
+    include: { clinicalInfo: true },
+  });
+  if (!patient) return { error: `"${args.patientName}" 환자를 찾을 수 없습니다.` };
+  return {
+    name: patient.name,
+    chartNumber: patient.emrPatientId,
+    clinical: patient.clinicalInfo || { message: '등록된 임상 프로필이 없습니다.' },
+  };
+}
+
+// ─── 26. 고주파 치료 평가 조회 ───
+export async function getRfEvaluations(args: Record<string, any>) {
+  const where: any = { deletedAt: null };
+  if (args.patientName) {
+    where.patient = { name: { contains: args.patientName } };
+  }
+  if (args.date) {
+    const d = new Date(args.date + 'T00:00:00');
+    const n = new Date(d); n.setDate(n.getDate() + 1);
+    where.evaluatedAt = { gte: d, lt: n };
+  }
+  if (args.doctor) {
+    where.doctorCode = { contains: args.doctor };
+  }
+
+  const evals = await prisma.rfTreatmentEvaluation.findMany({
+    where,
+    include: { patient: { select: { name: true, emrPatientId: true } } },
+    orderBy: { evaluatedAt: 'desc' },
+    take: 20,
+  });
+
+  return {
+    total: evals.length,
+    evaluations: evals.map(e => ({
+      date: e.evaluatedAt.toISOString().slice(0, 10),
+      patient: e.patient?.name,
+      chartNumber: e.chartNumber || e.patient?.emrPatientId,
+      probeType: e.probeType,
+      output: e.outputPercent ? `${e.outputPercent}%` : '',
+      temperature: e.temperature ? `${e.temperature}℃` : '',
+      treatmentTime: e.treatmentTime ? `${e.treatmentTime}분` : '',
+      ivTreatment: e.ivTreatment || '',
+      patientIssue: e.patientIssue || '',
+      doctor: e.doctorCode,
+      room: e.roomNumber,
+    })),
+  };
+}
+
+// ─── 27. 회진 준비 데이터 ───
+export async function getRoundPrep(args: Record<string, any>) {
+  const dateStr = args.date || toDateStrChat(new Date());
+  const targetDate = new Date(dateStr + 'T00:00:00');
+  const whereSlot: any = { date: targetDate, status: { not: 'CANCELLED' }, deletedAt: null };
+  if (args.doctor) whereSlot.doctorCode = { contains: args.doctor };
+
+  const slots = await prisma.rfScheduleSlot.findMany({
+    where: whereSlot,
+    include: {
+      patient: { select: { id: true, name: true, emrPatientId: true, sex: true, dob: true, clinicalInfo: { select: { diagnosis: true } } } },
+      room: { select: { name: true } },
+    },
+    orderBy: { startTime: 'asc' },
+  });
+
+  const patientIds = [...new Set(slots.map(s => s.patientId).filter(Boolean))] as string[];
+  const recentEvals: Record<string, any[]> = {};
+  for (const pid of patientIds) {
+    const evals = await prisma.rfTreatmentEvaluation.findMany({
+      where: { patientId: pid, deletedAt: null },
+      orderBy: { evaluatedAt: 'desc' },
+      take: 3,
+      select: { evaluatedAt: true, probeType: true, outputPercent: true, temperature: true, patientIssue: true },
+    });
+    recentEvals[pid] = evals.map(e => ({
+      date: e.evaluatedAt.toISOString().slice(0, 10),
+      probe: e.probeType, output: e.outputPercent, temp: e.temperature, issue: e.patientIssue,
+    }));
+  }
+
+  return {
+    date: dateStr,
+    doctor: args.doctor || '전체',
+    patients: slots.map(s => ({
+      room: s.room.name,
+      name: s.patient?.name,
+      chartNumber: s.patient?.emrPatientId,
+      diagnosis: s.patient?.clinicalInfo?.diagnosis,
+      time: s.startTime,
+      duration: s.duration,
+      recentEvals: s.patientId ? (recentEvals[s.patientId] || []) : [],
+    })),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Gemini Function Declarations (45개)
 // ═══════════════════════════════════════════════════════════
 
 const S = SchemaType;
@@ -1324,13 +1611,181 @@ const WRITE_FUNCTIONS = [
   },
 ];
 
-// ── 전체 합치기 (32개: READ 14+5 + WRITE 6+4 + 기타 3) ──
+// ── Phase 8E: 병실/인계/평가 (READ 7 + WRITE 5) ──
+const PHASE8E_READ_FUNCTIONS = [
+  {
+    name: 'getRoomBookingDaily',
+    description: '특정 날짜의 병실별 치료 스케줄과 환자 현황을 조회합니다.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        date: { type: S.STRING, description: '날짜 YYYY-MM-DD (기본: 오늘)' },
+      },
+    },
+  },
+  {
+    name: 'getRoomAvailability',
+    description: '현재 입실 가능한 병실과 언제 비는지 조회합니다. "빈 방", "입실 가능", "병실 현황" 등의 질문에 사용.',
+    parameters: { type: S.OBJECT, properties: {} },
+  },
+  {
+    name: 'getRoomBookingMonthly',
+    description: '월간 입원/퇴원/재원 카운트를 조회합니다.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        year: { type: S.NUMBER, description: '연도 (기본: 올해)' },
+        month: { type: S.NUMBER, description: '월 (기본: 이번달)' },
+      },
+    },
+  },
+  {
+    name: 'getHandoverDaily',
+    description: '특정 날짜의 인계장(간호 인수인계 기록)을 조회합니다. "인계", "인계사항", "인계장" 등의 질문에 사용.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        date: { type: S.STRING, description: '날짜 YYYY-MM-DD (기본: 오늘)' },
+      },
+    },
+  },
+  {
+    name: 'getPatientClinicalInfo',
+    description: '환자의 임상 프로필(진단명, 수술이력, 항암이력, 케모포트 등)을 조회합니다.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름' },
+      },
+      required: ['patientName'],
+    },
+  },
+  {
+    name: 'getRfEvaluations',
+    description: '고주파 치료 평가 기록을 조회합니다. "고주파 후기", "치료 평가", "환자 이슈" 등의 질문에 사용.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름 (선택)' },
+        date: { type: S.STRING, description: '날짜 YYYY-MM-DD (선택)' },
+        doctor: { type: S.STRING, description: '담당의 (선택)' },
+      },
+    },
+  },
+  {
+    name: 'getRoundPrep',
+    description: '회진 준비 데이터를 조회합니다. 담당의별 당일 RF 환자 목록 + 최근 3회 치료 후기.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        date: { type: S.STRING, description: '날짜 YYYY-MM-DD (기본: 오늘)' },
+        doctor: { type: S.STRING, description: '담당의 이름/코드' },
+      },
+    },
+  },
+];
+
+const PHASE8E_WRITE_FUNCTIONS = [
+  {
+    name: 'createHandoverEntry',
+    description: '인계 기록을 생성합니다. "인계 작성", "인계사항 등록" 등의 요청에 사용.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름' },
+        date: { type: S.STRING, description: '날짜 YYYY-MM-DD (기본: 오늘)' },
+        content: { type: S.STRING, description: '인계 내용' },
+        bloodDraw: { type: S.BOOLEAN, description: '채혈 여부' },
+        chemoNote: { type: S.STRING, description: '항암 메모' },
+        externalVisit: { type: S.STRING, description: '외진 예정' },
+        outing: { type: S.STRING, description: '외출 메모' },
+        returnTime: { type: S.STRING, description: '귀원 시간' },
+      },
+      required: ['patientName', 'content'],
+    },
+  },
+  {
+    name: 'modifyHandoverEntry',
+    description: '인계 기록을 수정합니다.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름' },
+        date: { type: S.STRING, description: '날짜 YYYY-MM-DD (기본: 오늘)' },
+        content: { type: S.STRING, description: '수정할 인계 내용' },
+        bloodDraw: { type: S.BOOLEAN, description: '채혈 여부' },
+        chemoNote: { type: S.STRING, description: '항암 메모' },
+        externalVisit: { type: S.STRING, description: '외진 예정' },
+        outing: { type: S.STRING, description: '외출 메모' },
+        returnTime: { type: S.STRING, description: '귀원 시간' },
+      },
+      required: ['patientName'],
+    },
+  },
+  {
+    name: 'cancelHandoverEntry',
+    description: '인계 기록을 삭제합니다.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름' },
+        date: { type: S.STRING, description: '날짜 YYYY-MM-DD (기본: 오늘)' },
+        reason: { type: S.STRING, description: '삭제 사유' },
+      },
+      required: ['patientName'],
+    },
+  },
+  {
+    name: 'updateClinicalInfo',
+    description: '환자 임상 프로필을 업데이트합니다. "진단명 등록", "케모포트", "항암이력" 등의 요청에 사용.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름' },
+        diagnosis: { type: S.STRING, description: '진단명' },
+        referralHospital: { type: S.STRING, description: '전원 병원' },
+        chemoPort: { type: S.STRING, description: '케모포트 상태 (IN/OUT/PICC)' },
+        surgeryHistory: { type: S.STRING, description: '수술 이력' },
+        metastasis: { type: S.STRING, description: '전이 부위' },
+        ctxHistory: { type: S.STRING, description: '항암치료 이력' },
+        rtHistory: { type: S.STRING, description: '방사선 이력' },
+        bloodDrawSchedule: { type: S.STRING, description: '채혈 스케줄' },
+      },
+      required: ['patientName'],
+    },
+  },
+  {
+    name: 'createRfEvaluation',
+    description: '고주파 치료 평가를 기록합니다. "고주파 평가 기록", "치료 후기 작성" 등의 요청에 사용.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름' },
+        probeType: { type: S.STRING, description: '도자 유형 (A 또는 B)' },
+        outputPercent: { type: S.NUMBER, description: '출력 %' },
+        temperature: { type: S.NUMBER, description: '온도 ℃' },
+        treatmentTime: { type: S.NUMBER, description: '처치시간 (분)' },
+        ivTreatment: { type: S.STRING, description: '수액처치' },
+        patientIssue: { type: S.STRING, description: '환자이슈/후기' },
+        doctorCode: { type: S.STRING, description: '담당의 코드' },
+        roomNumber: { type: S.STRING, description: '방/기계번호' },
+        diagnosis: { type: S.STRING, description: '진단명' },
+        patientType: { type: S.STRING, description: 'INPATIENT 또는 OUTPATIENT' },
+      },
+      required: ['patientName'],
+    },
+  },
+];
+
+// ── 전체 합치기 (45개) ──
 export const ALL_FUNCTION_DECLARATIONS = [
   ...READ_FUNCTIONS,
   ...NEW_READ_FUNCTIONS,
   ...SCHEDULING_READ_FUNCTIONS,
+  ...PHASE8E_READ_FUNCTIONS,
   ...WRITE_FUNCTIONS,
   ...SCHEDULING_WRITE_FUNCTIONS,
+  ...PHASE8E_WRITE_FUNCTIONS,
 ];
 
 // ── WRITE 함수명 Set (분기 판별용) ──
@@ -1339,6 +1794,9 @@ export const WRITE_FUNCTION_NAMES = new Set([
   'createProcedurePlan', 'modifyProcedurePlan', 'cancelProcedurePlan',
   'createManualTherapySlot', 'modifyManualTherapySlot', 'cancelManualTherapySlot',
   'createRfScheduleSlot', 'modifyRfScheduleSlot', 'cancelRfScheduleSlot',
+  // Phase 8E
+  'createHandoverEntry', 'modifyHandoverEntry', 'cancelHandoverEntry',
+  'updateClinicalInfo', 'createRfEvaluation',
 ]);
 
 // ═══════════════════════════════════════════════════════════
@@ -1391,6 +1849,21 @@ export async function executeFunction(
       return getTodayScheduleOverview();
     case 'findPatientBookings':
       return findPatientBookings(args);
+    // Phase 8E
+    case 'getRoomBookingDaily':
+      return getRoomBookingDaily(args);
+    case 'getRoomAvailability':
+      return getRoomAvailability();
+    case 'getRoomBookingMonthly':
+      return getRoomBookingMonthly(args);
+    case 'getHandoverDaily':
+      return getHandoverDaily(args);
+    case 'getPatientClinicalInfo':
+      return getPatientClinicalInfo(args);
+    case 'getRfEvaluations':
+      return getRfEvaluations(args);
+    case 'getRoundPrep':
+      return getRoundPrep(args);
     default:
       return { error: `알 수 없는 함수: ${name}` };
   }

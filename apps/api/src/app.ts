@@ -31,6 +31,9 @@ import therapistRoutes from './routes/therapists';
 import manualTherapyRoutes from './routes/manualTherapy';
 import staffNoteRoutes from './routes/staffNotes';
 import rfScheduleRoutes from './routes/rfSchedule';
+import roomBookingRoutes from './routes/roomBooking';
+import handoverRoutes from './routes/handover';
+import rfEvaluationRoutes from './routes/rfEvaluation';
 
 const app = express();
 
@@ -93,6 +96,9 @@ app.use('/api/therapists', therapistRoutes);
 app.use('/api/manual-therapy', manualTherapyRoutes);
 app.use('/api/staff-notes', staffNoteRoutes);
 app.use('/api/rf-schedule', rfScheduleRoutes);
+app.use('/api/room-booking', roomBookingRoutes);
+app.use('/api/handover', handoverRoutes);
+app.use('/api/rf-evaluation', rfEvaluationRoutes);
 
 // 헬스 체크
 app.get('/health', (_req, res) => {
