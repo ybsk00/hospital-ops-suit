@@ -7,6 +7,11 @@ import { asyncHandler, AppError } from '../middleware/errorHandler';
 
 const router = Router();
 
+// ─── 로컬 날짜 문자열 (KST 안전) ───
+function toDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 // ─── 타임슬롯 정의 (09:00~17:30, 30분 간격) ───
 const TIME_SLOTS = [
   '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
@@ -26,7 +31,7 @@ function getWeekDates(dateStr: string): string[] {
   for (let i = 0; i < 6; i++) {
     const dd = new Date(monday);
     dd.setDate(monday.getDate() + i);
-    dates.push(dd.toISOString().slice(0, 10));
+    dates.push(toDateStr(dd));
   }
   return dates;
 }
@@ -36,7 +41,7 @@ router.get(
   '/weekly',
   requireAuth,
   asyncHandler(async (req: Request, res: Response) => {
-    const dateParam = (req.query.date as string) || new Date().toISOString().slice(0, 10);
+    const dateParam = (req.query.date as string) || toDateStr(new Date());
     const weekDates = getWeekDates(dateParam);
     const startDate = weekDates[0];
     const endDate = weekDates[weekDates.length - 1];
@@ -76,7 +81,7 @@ router.get(
     }
 
     for (const slot of slots) {
-      const dateStr = slot.date.toISOString().slice(0, 10);
+      const dateStr = toDateStr(slot.date);
       if (grid[slot.therapistId]?.[dateStr]) {
         grid[slot.therapistId][dateStr][slot.timeSlot] = {
           id: slot.id,
@@ -111,7 +116,7 @@ router.get(
         grid,
         remarks: remarks.map(r => ({
           id: r.id,
-          date: r.date.toISOString().slice(0, 10),
+          date: toDateStr(r.date),
           content: r.content,
         })),
         stats,
@@ -164,7 +169,7 @@ router.get(
     }
 
     for (const slot of slots) {
-      const dateStr = slot.date.toISOString().slice(0, 10);
+      const dateStr = toDateStr(slot.date);
       if (!grid[slot.therapistId]) continue;
       if (!grid[slot.therapistId][dateStr]) {
         grid[slot.therapistId][dateStr] = {};
@@ -197,7 +202,7 @@ router.get(
       for (let i = 0; i < 6; i++) {
         const d = new Date(cursor);
         d.setDate(cursor.getDate() + i);
-        weekDates.push(d.toISOString().slice(0, 10));
+        weekDates.push(toDateStr(d));
       }
       weeks.push({
         start: weekDates[0],
@@ -226,7 +231,7 @@ router.get(
         grid,
         remarks: remarks.map(r => ({
           id: r.id,
-          date: r.date.toISOString().slice(0, 10),
+          date: toDateStr(r.date),
           content: r.content,
         })),
         stats,

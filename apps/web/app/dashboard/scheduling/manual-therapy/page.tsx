@@ -80,6 +80,11 @@ const STATUS_STYLES: Record<string, string> = {
   CANCELLED: 'opacity-30 line-through',
 };
 
+// ─── 로컬 날짜 문자열 (KST 안전) ───
+function toDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 // ─── Helper ───
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00');
@@ -97,7 +102,7 @@ function getWeekLabel(start: string, end: string): string {
 function shiftWeek(dateStr: string, offset: number): string {
   const d = new Date(dateStr + 'T00:00:00');
   d.setDate(d.getDate() + offset * 7);
-  return d.toISOString().slice(0, 10);
+  return toDateStr(d);
 }
 
 // ─── SlotModal ───
@@ -526,7 +531,7 @@ type ViewMode = 'weekly' | 'monthly';
 export default function ManualTherapyPage() {
   const { accessToken } = useAuthStore();
   const [viewMode, setViewMode] = useState<ViewMode>('weekly');
-  const [weekDate, setWeekDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [weekDate, setWeekDate] = useState(() => toDateStr(new Date()));
   const [data, setData] = useState<WeeklyData | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -586,7 +591,7 @@ export default function ManualTherapyPage() {
     fetchData();
   };
 
-  const goToday = () => setWeekDate(new Date().toISOString().slice(0, 10));
+  const goToday = () => setWeekDate(toDateStr(new Date()));
 
   // 월간 네비게이션
   const shiftMonth = (offset: number) => {
@@ -637,7 +642,7 @@ export default function ManualTherapyPage() {
   for (let i = 0; i < 6; i++) {
     const dd = new Date(startD);
     dd.setDate(startD.getDate() + i);
-    weekDates.push(dd.toISOString().slice(0, 10));
+    weekDates.push(toDateStr(dd));
   }
 
   const totalCols = weekDates.length * therapists.length;
@@ -722,7 +727,7 @@ export default function ManualTherapyPage() {
               }
             }
             const calDays = getMonthCalendarDays(monthYear, monthNum);
-            const today = new Date().toISOString().slice(0, 10);
+            const today = toDateStr(new Date());
 
             return (
               <div className="bg-white rounded-lg border">
@@ -811,7 +816,7 @@ export default function ManualTherapyPage() {
             {weekDates.map((date, idx) => {
               const dayLabel = DAY_LABELS[idx];
               const isSat = dayLabel === '토';
-              const isToday = date === new Date().toISOString().slice(0, 10);
+              const isToday = date === toDateStr(new Date());
 
               return (
                 <div

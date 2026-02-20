@@ -81,11 +81,16 @@ const DOCTOR_COLORS: Record<string, string> = {
   J: 'bg-green-500',
 };
 
+// ─── 로컬 날짜 문자열 (KST 안전) ───
+function toDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 // ─── Helper ───
 function shiftDay(dateStr: string, offset: number): string {
   const d = new Date(dateStr + 'T00:00:00');
   d.setDate(d.getDate() + offset);
-  return d.toISOString().slice(0, 10);
+  return toDateStr(d);
 }
 
 function formatDateFull(dateStr: string): string {
@@ -477,7 +482,7 @@ const TIME_SLOTS_DEFAULT = [
 function shiftWeek(dateStr: string, offset: number): string {
   const d = new Date(dateStr + 'T00:00:00');
   d.setDate(d.getDate() + offset * 7);
-  return d.toISOString().slice(0, 10);
+  return toDateStr(d);
 }
 
 function getWeekLabel(start: string, end: string): string {
@@ -490,12 +495,12 @@ function getWeekLabel(start: string, end: string): string {
 export default function RfSchedulePage() {
   const { accessToken } = useAuthStore();
   const [viewMode, setViewMode] = useState<ViewMode>('daily');
-  const [dateStr, setDateStr] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dateStr, setDateStr] = useState(() => toDateStr(new Date()));
   const [data, setData] = useState<DailyData | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Weekly/Monthly state
-  const [weekDate, setWeekDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [weekDate, setWeekDate] = useState(() => toDateStr(new Date()));
   const [weeklyData, setWeeklyData] = useState<WeeklyRfData | null>(null);
   const [monthYear, setMonthYear] = useState(() => new Date().getFullYear());
   const [monthNum, setMonthNum] = useState(() => new Date().getMonth() + 1);
@@ -564,7 +569,7 @@ export default function RfSchedulePage() {
     fetchData();
   };
 
-  const goToday = () => setDateStr(new Date().toISOString().slice(0, 10));
+  const goToday = () => setDateStr(toDateStr(new Date()));
 
   const shiftMonth = (offset: number) => {
     let y = monthYear, m = monthNum + offset;
@@ -596,7 +601,7 @@ export default function RfSchedulePage() {
     for (let i = 0; i < 6; i++) {
       const dd = new Date(s);
       dd.setDate(s.getDate() + i);
-      dates.push(dd.toISOString().slice(0, 10));
+      dates.push(dtoDateStr(d));
     }
     return dates;
   };
@@ -786,7 +791,7 @@ export default function RfSchedulePage() {
               <div className="flex items-center gap-3">
                 <span className="font-semibold text-slate-800">{wkLabel}</span>
                 <button
-                  onClick={() => setWeekDate(new Date().toISOString().slice(0, 10))}
+                  onClick={() => setWeekDate(toDateStr(new Date()))}
                   className="text-xs px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100"
                 >이번주</button>
               </div>
@@ -900,7 +905,7 @@ export default function RfSchedulePage() {
               }
             }
             const calDays = getMonthCalendarDays(monthYear, monthNum);
-            const today = new Date().toISOString().slice(0, 10);
+            const today = toDateStr(new Date());
 
             return (
               <div className="bg-white rounded-lg border">
