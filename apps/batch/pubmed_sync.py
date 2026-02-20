@@ -218,6 +218,429 @@ TREATMENT_QUERIES = {
             'AND (survival OR beneficial OR "risk reduction" OR "recurrence")'
         ),
     },
+    # ══════════════════════════════════════════════
+    #  혈액검사/소변검사/만성질환 지표 카테고리
+    # ══════════════════════════════════════════════
+
+    # ── A. 혈액검사 기본 지표 (CBC) ──
+    'cbc_interpretation': {
+        'name_ko': '일반혈액검사(CBC) 해석',
+        'query': (
+            '("complete blood count" OR CBC OR hemoglobin OR "white blood cell" '
+            'OR WBC OR "red blood cell" OR RBC OR platelet OR hematocrit) '
+            'AND (interpretation OR "clinical significance" OR "diagnostic value" '
+            'OR "reference range" OR "abnormal" OR screening) '
+            'AND (review OR guideline OR "clinical practice")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+    'anemia_diagnosis': {
+        'name_ko': '빈혈 감별진단',
+        'query': (
+            '(anemia OR "iron deficiency" OR "vitamin B12 deficiency" OR "folate deficiency" '
+            'OR ferritin OR TIBC OR "transferrin saturation" OR reticulocyte '
+            'OR "mean corpuscular volume" OR MCV) '
+            'AND (diagnosis OR "differential diagnosis" OR screening OR evaluation) '
+            'AND (review OR guideline OR "clinical significance")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+    'electrolyte_imbalance': {
+        'name_ko': '전해질 이상',
+        'query': (
+            '("electrolyte imbalance" OR hyponatremia OR hypernatremia '
+            'OR hypokalemia OR hyperkalemia OR hypocalcemia OR hypercalcemia '
+            'OR hypomagnesemia OR "electrolyte disorder") '
+            'AND (diagnosis OR "clinical significance" OR symptom OR management) '
+            'AND (review OR guideline OR screening)'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+
+    # ── B. 암 종양표지자 ──
+    'tumor_marker_general': {
+        'name_ko': '종양표지자 개요',
+        'query': (
+            '("tumor marker" OR "tumour marker" OR "cancer biomarker" '
+            'OR "serum biomarker") '
+            'AND (screening OR diagnosis OR monitoring OR prognosis) '
+            'AND (cancer OR malignancy OR neoplasm) '
+            'AND (review OR guideline OR "clinical utility" OR "sensitivity and specificity")'
+        ),
+        'category': 'CANCER',
+        'lenient': True,
+    },
+    'cea_marker': {
+        'name_ko': 'CEA(암태아성항원)',
+        'query': (
+            '("carcinoembryonic antigen" OR CEA) '
+            'AND (colorectal OR "colon cancer" OR "lung cancer" OR "gastric cancer" '
+            'OR "pancreatic cancer" OR "breast cancer") '
+            'AND (screening OR diagnosis OR monitoring OR prognosis OR recurrence) '
+            'AND (review OR "clinical significance" OR guideline)'
+        ),
+        'category': 'CANCER',
+        'lenient': True,
+    },
+    'afp_marker': {
+        'name_ko': 'AFP(알파태아단백)',
+        'query': (
+            '("alpha-fetoprotein" OR AFP) '
+            'AND ("hepatocellular carcinoma" OR "liver cancer" OR "germ cell tumor" '
+            'OR "hepatic" OR "testicular cancer") '
+            'AND (screening OR diagnosis OR monitoring OR prognosis OR surveillance) '
+            'AND (review OR "clinical significance" OR guideline)'
+        ),
+        'category': 'CANCER',
+        'lenient': True,
+    },
+    'ca19_9_marker': {
+        'name_ko': 'CA 19-9',
+        'query': (
+            '("CA 19-9" OR "CA19-9" OR "carbohydrate antigen 19-9") '
+            'AND ("pancreatic cancer" OR "biliary cancer" OR "cholangiocarcinoma" '
+            'OR "gastric cancer" OR "colorectal") '
+            'AND (screening OR diagnosis OR monitoring OR prognosis) '
+            'AND (review OR "clinical significance" OR guideline)'
+        ),
+        'category': 'CANCER',
+        'lenient': True,
+    },
+    'ca125_marker': {
+        'name_ko': 'CA-125',
+        'query': (
+            '("CA-125" OR "CA 125" OR "cancer antigen 125") '
+            'AND ("ovarian cancer" OR "endometrial cancer" OR "peritoneal" '
+            'OR "gynecologic" OR "pelvic mass") '
+            'AND (screening OR diagnosis OR monitoring OR prognosis) '
+            'AND (review OR "clinical significance" OR guideline)'
+        ),
+        'category': 'CANCER',
+        'lenient': True,
+    },
+    'psa_marker': {
+        'name_ko': 'PSA(전립선특이항원)',
+        'query': (
+            '("prostate-specific antigen" OR PSA OR "free PSA" OR "PSA density" '
+            'OR "PSA velocity") '
+            'AND ("prostate cancer" OR "prostatic neoplasm") '
+            'AND (screening OR diagnosis OR "early detection" OR monitoring) '
+            'AND (review OR guideline OR "clinical utility")'
+        ),
+        'category': 'CANCER',
+        'lenient': True,
+    },
+    'blood_cancer_screening': {
+        'name_ko': '혈액검사 암 선별',
+        'query': (
+            '("blood test" OR "blood-based" OR "liquid biopsy" OR "circulating tumor" '
+            'OR "multi-cancer early detection" OR "cancer screening blood") '
+            'AND (cancer OR malignancy OR "early detection" OR screening) '
+            'AND ("sensitivity" OR "specificity" OR "diagnostic accuracy" '
+            'OR "multi-cancer" OR "pan-cancer") '
+            'AND (review OR "clinical trial" OR "prospective")'
+        ),
+        'category': 'CANCER',
+        'lenient': True,
+    },
+
+    # ── C. 간기능 검사 ──
+    'liver_function': {
+        'name_ko': '간기능검사(LFT)',
+        'query': (
+            '("liver function test" OR AST OR ALT OR "aspartate aminotransferase" '
+            'OR "alanine aminotransferase" OR GGT OR "gamma-glutamyl" '
+            'OR "alkaline phosphatase" OR ALP OR bilirubin OR albumin) '
+            'AND (interpretation OR "clinical significance" OR "elevated" '
+            'OR "abnormal" OR "liver disease" OR diagnosis) '
+            'AND (review OR guideline OR "clinical practice")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+    'fatty_liver': {
+        'name_ko': '지방간/간질환',
+        'query': (
+            '("fatty liver" OR NAFLD OR NASH OR "non-alcoholic fatty liver" '
+            'OR "metabolic dysfunction-associated steatotic liver" OR MASLD '
+            'OR "hepatic steatosis") '
+            'AND (diagnosis OR "blood test" OR biomarker OR screening '
+            'OR "liver enzyme" OR "FIB-4" OR "APRI") '
+            'AND (review OR guideline OR management)'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+
+    # ── D. 신장기능 검사 ──
+    'renal_function': {
+        'name_ko': '신장기능검사',
+        'query': (
+            '("renal function" OR "kidney function" OR creatinine OR BUN '
+            'OR "blood urea nitrogen" OR "estimated glomerular filtration rate" '
+            'OR eGFR OR "cystatin C" OR "chronic kidney disease") '
+            'AND (interpretation OR "clinical significance" OR staging '
+            'OR screening OR "early detection") '
+            'AND (review OR guideline OR "clinical practice")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+
+    # ── E. 당뇨/혈당 검사 ──
+    'diabetes_screening': {
+        'name_ko': '당뇨/혈당 검사',
+        'query': (
+            '(HbA1c OR "glycated hemoglobin" OR "fasting glucose" '
+            'OR "fasting plasma glucose" OR OGTT OR "oral glucose tolerance" '
+            'OR "impaired fasting glucose" OR prediabetes OR "type 2 diabetes") '
+            'AND (screening OR diagnosis OR "early detection" OR "diagnostic criteria" '
+            'OR monitoring OR "glycemic control") '
+            'AND (review OR guideline OR "clinical significance")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+
+    # ── F. 지질 검사 ──
+    'lipid_panel': {
+        'name_ko': '지질검사(콜레스테롤)',
+        'query': (
+            '("lipid panel" OR "lipid profile" OR cholesterol OR LDL OR HDL '
+            'OR triglyceride OR "total cholesterol" OR dyslipidemia '
+            'OR "cardiovascular risk" OR "atherogenic") '
+            'AND (interpretation OR "clinical significance" OR "risk assessment" '
+            'OR screening OR guideline OR "target level") '
+            'AND (review OR guideline OR "clinical practice")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+
+    # ── G. 갑상선 기능 검사 ──
+    'thyroid_function': {
+        'name_ko': '갑상선기능검사',
+        'query': (
+            '("thyroid function test" OR TSH OR "thyroid-stimulating hormone" '
+            'OR "free T4" OR "free T3" OR "free thyroxine" OR hypothyroidism '
+            'OR hyperthyroidism OR "thyroid disorder") '
+            'AND (interpretation OR "clinical significance" OR screening '
+            'OR diagnosis OR "subclinical") '
+            'AND (review OR guideline OR "clinical practice")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+    'thyroid_cancer_marker': {
+        'name_ko': '갑상선암 표지자',
+        'query': (
+            '(thyroglobulin OR calcitonin OR "thyroid cancer" OR "thyroid nodule" '
+            'OR "thyroid carcinoma" OR "fine needle aspiration") '
+            'AND ("tumor marker" OR screening OR diagnosis OR monitoring '
+            'OR prognosis OR recurrence) '
+            'AND (review OR guideline OR "clinical utility")'
+        ),
+        'category': 'CANCER',
+        'lenient': True,
+    },
+
+    # ── H. 염증/면역 지표 ──
+    'inflammation_marker': {
+        'name_ko': '염증표지자(CRP/ESR)',
+        'query': (
+            '("C-reactive protein" OR CRP OR "erythrocyte sedimentation rate" '
+            'OR ESR OR "high-sensitivity CRP" OR "hs-CRP" OR procalcitonin '
+            'OR "inflammatory marker" OR "acute phase reactant") '
+            'AND (interpretation OR "clinical significance" OR diagnosis '
+            'OR "chronic inflammation" OR "cardiovascular risk") '
+            'AND (review OR guideline OR "clinical practice")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+
+    # ── I. 소변검사 ──
+    'urinalysis_general': {
+        'name_ko': '소변검사 해석',
+        'query': (
+            '(urinalysis OR "urine analysis" OR "urine test" OR "dipstick" '
+            'OR "urine microscopy") '
+            'AND (interpretation OR "clinical significance" OR screening '
+            'OR diagnosis OR "abnormal findings") '
+            'AND (review OR guideline OR "clinical practice")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+    'proteinuria': {
+        'name_ko': '단백뇨',
+        'query': (
+            '(proteinuria OR "urine protein" OR albuminuria OR microalbuminuria '
+            'OR "urine albumin-to-creatinine ratio" OR UACR '
+            'OR "nephrotic syndrome") '
+            'AND (screening OR diagnosis OR "clinical significance" '
+            'OR "kidney disease" OR "chronic kidney disease" OR "diabetic nephropathy") '
+            'AND (review OR guideline OR "early detection")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+    'hematuria': {
+        'name_ko': '혈뇨',
+        'query': (
+            '(hematuria OR "urine blood" OR "microscopic hematuria" '
+            'OR "gross hematuria" OR "urinary blood") '
+            'AND (evaluation OR diagnosis OR "clinical significance" '
+            'OR "bladder cancer" OR "kidney cancer" OR "urological" OR etiology) '
+            'AND (review OR guideline OR "clinical practice")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+    'urine_glucose': {
+        'name_ko': '요당/소변포도당',
+        'query': (
+            '("urine glucose" OR glycosuria OR glucosuria '
+            'OR "renal glycosuria" OR "urine sugar") '
+            'AND (diabetes OR screening OR diagnosis OR "clinical significance" '
+            'OR "renal threshold" OR "diabetic monitoring") '
+            'AND (review OR guideline OR interpretation)'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+
+    # ── J. 자율신경실조증 혈액검사 관련 ──
+    'dysautonomia_lab': {
+        'name_ko': '자율신경실조증 혈액검사',
+        'query': (
+            '(dysautonomia OR "autonomic dysfunction" OR "autonomic neuropathy") '
+            'AND ("blood test" OR biomarker OR "heart rate variability" OR catecholamine '
+            'OR norepinephrine OR "plasma metanephrine" OR cortisol '
+            'OR "laboratory findings" OR "autonomic testing") '
+            'AND (diagnosis OR evaluation OR screening OR "diagnostic workup") '
+            'AND (review OR guideline OR "clinical significance")'
+        ),
+        'category': 'NERVE',
+        'lenient': True,
+    },
+
+    # ── K. 만성질환 조기 지표 ──
+    'metabolic_syndrome': {
+        'name_ko': '대사증후군 지표',
+        'query': (
+            '("metabolic syndrome" OR "insulin resistance" OR "metabolic disorder" '
+            'OR "cardiometabolic" OR "visceral obesity") '
+            'AND (biomarker OR screening OR "blood test" OR "diagnostic criteria" '
+            'OR "risk factor" OR "early detection") '
+            'AND (review OR guideline OR "clinical practice" OR "risk assessment")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+    'prediabetes_marker': {
+        'name_ko': '당뇨전단계 지표',
+        'query': (
+            '(prediabetes OR "pre-diabetes" OR "impaired glucose tolerance" '
+            'OR "impaired fasting glucose" OR "insulin resistance" '
+            'OR "HbA1c 5.7" OR "borderline diabetes") '
+            'AND (screening OR "early detection" OR prevention OR "lifestyle intervention" '
+            'OR biomarker OR "risk prediction") '
+            'AND (review OR guideline OR "clinical significance")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+    'early_ckd': {
+        'name_ko': '만성신장병 조기지표',
+        'query': (
+            '("chronic kidney disease" OR CKD OR "early CKD" '
+            'OR "kidney disease staging" OR "renal impairment") '
+            'AND ("early detection" OR screening OR biomarker '
+            'OR "cystatin C" OR eGFR OR albuminuria OR UACR '
+            'OR "stage 1" OR "stage 2") '
+            'AND (review OR guideline OR "clinical practice")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+    'cardiovascular_risk_marker': {
+        'name_ko': '심혈관 위험 지표',
+        'query': (
+            '("cardiovascular risk" OR "coronary heart disease" OR "atherosclerosis") '
+            'AND (biomarker OR "blood test" OR "risk score" OR "Framingham" '
+            'OR "hs-CRP" OR "lipoprotein(a)" OR "apolipoprotein" OR homocysteine '
+            'OR "BNP" OR "NT-proBNP") '
+            'AND (screening OR "risk assessment" OR "early detection" OR prediction) '
+            'AND (review OR guideline OR "clinical significance")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+
+    # ── L. 암 의심 혈액 이상소견 ──
+    'cancer_blood_abnormality': {
+        'name_ko': '암 의심 혈액이상',
+        'query': (
+            '("unexplained anemia" OR "unexplained weight loss" OR "elevated LDH" '
+            'OR "elevated ESR" OR "paraneoplastic" OR "cancer-associated" '
+            'OR "occult malignancy") '
+            'AND ("blood test" OR "laboratory abnormality" OR "hematologic" '
+            'OR "biochemical" OR "initial workup") '
+            'AND (cancer OR malignancy OR "early detection" OR diagnosis) '
+            'AND (review OR guideline OR "clinical significance")'
+        ),
+        'category': 'CANCER',
+        'lenient': True,
+    },
+    'ldh_cancer': {
+        'name_ko': 'LDH와 암',
+        'query': (
+            '("lactate dehydrogenase" OR LDH) '
+            'AND (cancer OR tumor OR lymphoma OR melanoma OR "germ cell" '
+            'OR prognosis OR "tumor burden") '
+            'AND ("prognostic marker" OR "clinical significance" OR monitoring '
+            'OR "elevated LDH") '
+            'AND (review OR "meta-analysis" OR "clinical utility")'
+        ),
+        'category': 'CANCER',
+        'lenient': True,
+    },
+
+    # ── M. 비타민/미네랄 결핍 검사 ──
+    'vitamin_d_deficiency': {
+        'name_ko': '비타민D 결핍',
+        'query': (
+            '("vitamin D deficiency" OR "25-hydroxyvitamin D" OR "25(OH)D" '
+            'OR "vitamin D insufficiency" OR "vitamin D status") '
+            'AND (screening OR diagnosis OR "clinical significance" '
+            'OR "health outcomes" OR "chronic disease" OR "cancer risk" '
+            'OR "immune function") '
+            'AND (review OR guideline OR "clinical practice")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+    'vitamin_b12_folate': {
+        'name_ko': '비타민B12/엽산',
+        'query': (
+            '("vitamin B12" OR cobalamin OR "methylmalonic acid" OR folate '
+            'OR "folic acid" OR homocysteine) '
+            'AND (deficiency OR "clinical significance" OR "megaloblastic anemia" '
+            'OR "neurological" OR screening OR diagnosis) '
+            'AND (review OR guideline OR "clinical practice")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+
+    # ══════════════════════════════════════════════
+    #  자율신경실조증 카테고리
+    # ══════════════════════════════════════════════
+
     # ── 자율신경실조증 ──
     'dysautonomia_cause': {
         'name_ko': '자율신경실조증(원인)',
@@ -228,6 +651,8 @@ TREATMENT_QUERIES = {
             'AND (etiology OR cause OR pathophysiology OR "risk factor" OR mechanism) '
             'AND (stress OR fatigue OR diabetes OR autoimmune OR "lifestyle" OR aging)'
         ),
+        'category': 'NERVE',
+        'lenient': True,
     },
     'dysautonomia_symptom': {
         'name_ko': '자율신경실조증(증상)',
@@ -239,6 +664,8 @@ TREATMENT_QUERIES = {
             'OR "digestive disorder" OR dizziness OR "cold extremities" OR sweating '
             'OR "orthostatic hypotension" OR syncope)'
         ),
+        'category': 'NERVE',
+        'lenient': True,
     },
     'dysautonomia_diagnosis': {
         'name_ko': '자율신경실조증(진단)',
@@ -248,6 +675,8 @@ TREATMENT_QUERIES = {
             'OR "tilt table test" OR "Valsalva maneuver" OR biomarker) '
             'AND (sensitivity OR specificity OR accuracy OR evaluation OR screening)'
         ),
+        'category': 'NERVE',
+        'lenient': True,
     },
     'dysautonomia_treatment': {
         'name_ko': '자율신경실조증(치료)',
@@ -258,6 +687,8 @@ TREATMENT_QUERIES = {
             'AND (pharmacotherapy OR "lifestyle modification" OR exercise OR "cognitive behavioral" '
             'OR biofeedback OR "heart rate variability training" OR improvement OR recovery)'
         ),
+        'category': 'NERVE',
+        'lenient': True,
     },
     'dysautonomia_cancer': {
         'name_ko': '자율신경실조증(암환자)',
@@ -268,6 +699,57 @@ TREATMENT_QUERIES = {
             'OR chemotherapy OR "paraneoplastic") '
             'AND (symptom OR management OR treatment OR "quality of life" OR fatigue OR neuropathy)'
         ),
+        'category': 'NERVE',
+        'lenient': True,
+    },
+    # ── 고압산소치료 + 당뇨발 ──
+    'hbot_diabetic_foot': {
+        'name_ko': '고압산소치료-당뇨발',
+        'query': (
+            '("hyperbaric oxygen" OR HBOT OR "hyperbaric oxygenation") '
+            'AND ("diabetic foot" OR "diabetic foot ulcer" OR "diabetic ulcer" '
+            'OR "diabetic wound" OR "diabetic lower extremity") '
+            'AND (healing OR outcome OR amputation OR "wound closure" '
+            'OR "limb salvage" OR effective OR clinical OR randomized '
+            'OR "systematic review" OR meta-analysis)'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+    'hbot_diabetic_foot_rct': {
+        'name_ko': '고압산소치료-당뇨발(RCT)',
+        'query': (
+            '("hyperbaric oxygen" OR HBOT) '
+            'AND ("diabetic foot" OR "diabetic ulcer" OR "diabetic wound") '
+            'AND ("randomized controlled trial" OR "randomised controlled trial" '
+            'OR "controlled clinical trial" OR "prospective") '
+            'AND (amputation OR healing OR "wound closure" OR outcome)'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+    'hbot_diabetic_foot_review': {
+        'name_ko': '고압산소치료-당뇨발(리뷰)',
+        'query': (
+            '("hyperbaric oxygen" OR HBOT) '
+            'AND ("diabetic foot" OR "diabetic ulcer" OR "diabetic wound") '
+            'AND ("systematic review" OR "meta-analysis" OR "Cochrane" OR "review") '
+            'AND (evidence OR efficacy OR effectiveness OR amputation OR healing)'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
+    },
+    'hbot_diabetic_foot_insurance': {
+        'name_ko': '고압산소치료-당뇨발(보험급여)',
+        'query': (
+            '("hyperbaric oxygen" OR HBOT) '
+            'AND ("diabetic foot" OR "diabetic ulcer" OR "chronic wound") '
+            'AND ("cost-effectiveness" OR "cost analysis" OR "health insurance" '
+            'OR "reimbursement" OR "cost-benefit" OR "economic" OR "cost utility" '
+            'OR "Wagner" OR "grade 3" OR "grade III")'
+        ),
+        'category': 'GENERAL',
+        'lenient': True,
     },
 }
 
@@ -535,7 +1017,98 @@ def generate_faqs(article: Dict, treatment_key: str, treatment_ko: str) -> List[
     if article['doi']:
         citation_full += f', DOI: {article["doi"]}'
 
-    prompt = f"""당신은 암 치료 연구를 환자 친화적인 한국어 FAQ로 변환하는 전문가입니다.
+    # 카테고리별 프롬프트 분기
+    tconfig = TREATMENT_QUERIES.get(treatment_key, {})
+    faq_category = tconfig.get('category', 'CANCER')
+    is_lab_topic = tconfig.get('lenient', False)
+
+    if is_lab_topic and faq_category != 'CANCER':
+        # 혈액검사/소변검사/만성질환 지표 등 정보성 논문
+        prompt = f"""당신은 의학 연구를 환자 친화적인 한국어 FAQ로 변환하는 전문가입니다.
+
+아래 PubMed 논문의 초록을 읽고, 환자가 궁금해할 FAQ 2~4개를 생성하세요.
+
+[논문 정보]
+제목: {article['title']}
+저자: {article['authors']}
+학술지: {article['journal']} ({article['year']})
+PMID: {article['pmid']}
+주제: {treatment_ko}
+
+[초록]
+{article['abstract'][:3000]}
+
+[생성 규칙]
+1. 각 FAQ는 JSON 형식으로 출력
+2. question: 환자가 검사 결과를 받고 물어볼 만한 자연스러운 한국어 질문
+   예시:
+   - "피검사에서 {treatment_ko} 수치가 높으면 어떤 의미인가요?"
+   - "소변검사에서 단백뇨가 나왔는데 어떤 질환을 의심해야 하나요?"
+   - "{treatment_ko} 정상 범위는 어떻게 되나요?"
+   - "혈액검사 결과에서 이상이 있으면 어떤 추가 검사를 해야 하나요?"
+3. answer: 논문 내용을 바탕으로 이해하기 쉬운 한국어 설명 (3~5문장)
+   - 검사 항목의 의미와 정상/이상 범위를 명확히 설명
+   - 이상 수치가 의심할 수 있는 질환을 구체적으로 언급
+   - 과장하지 말고 논문 근거를 정확히 전달
+   - 반드시 "정확한 판단은 담당 의료진과 상담하시기 바랍니다" 같은 안내 포함
+   - 반드시 답변 마지막에 출처 명시: "(출처: {citation_full})"
+4. category: "{faq_category}"
+5. 논문 1개당 2~4개 FAQ (중복 질문 지양)
+6. 환자가 실제로 검색할 만한 키워드(피검사, 소변검사, 수치, 정상범위 등)를 질문에 포함
+
+[출력 형식] (JSON 배열만 출력, 다른 텍스트 없이):
+[
+  {{
+    "question": "질문",
+    "answer": "답변... (출처: {citation_full})",
+    "category": "{faq_category}"
+  }}
+]"""
+    elif faq_category == 'CANCER' and is_lab_topic:
+        # 종양표지자, 암 의심 혈액이상 등 암+검사 관련 논문
+        prompt = f"""당신은 암 관련 검사 연구를 환자 친화적인 한국어 FAQ로 변환하는 전문가입니다.
+
+아래 PubMed 논문의 초록을 읽고, 환자가 궁금해할 FAQ 2~4개를 생성하세요.
+
+[논문 정보]
+제목: {article['title']}
+저자: {article['authors']}
+학술지: {article['journal']} ({article['year']})
+PMID: {article['pmid']}
+주제: {treatment_ko}
+
+[초록]
+{article['abstract'][:3000]}
+
+[생성 규칙]
+1. 각 FAQ는 JSON 형식으로 출력
+2. question: 암 환자나 건강검진 수검자가 물어볼 만한 자연스러운 한국어 질문
+   예시:
+   - "피검사에서 {treatment_ko} 수치가 높으면 암인가요?"
+   - "{treatment_ko} 검사는 어떤 암을 발견할 수 있나요?"
+   - "종양표지자 수치가 정상이면 암이 아닌 건가요?"
+   - "혈액검사로 암을 조기에 발견할 수 있나요?"
+3. answer: 논문 내용을 바탕으로 이해하기 쉬운 한국어 설명 (3~5문장)
+   - 해당 표지자/검사가 어떤 암과 관련 있는지 구체적으로 설명
+   - 수치 상승이 반드시 암을 의미하지 않을 수 있음을 명확히 설명
+   - 위양성/위음성 가능성도 함께 안내
+   - 과장하지 말고 논문 근거를 정확히 전달
+   - 반드시 답변 마지막에 출처 명시: "(출처: {citation_full})"
+4. category: "CANCER"
+5. 논문 1개당 2~4개 FAQ (중복 질문 지양)
+6. 환자가 실제로 검색할 만한 키워드(피검사, 종양표지자, 수치, 암검사 등)를 질문에 포함
+
+[출력 형식] (JSON 배열만 출력, 다른 텍스트 없이):
+[
+  {{
+    "question": "질문",
+    "answer": "답변... (출처: {citation_full})",
+    "category": "CANCER"
+  }}
+]"""
+    else:
+        # 기존 암 보조치료 논문 (고주파온열, 비타민C 등)
+        prompt = f"""당신은 암 치료 연구를 환자 친화적인 한국어 FAQ로 변환하는 전문가입니다.
 
 아래 PubMed 논문의 초록을 읽고, 환자가 궁금해할 FAQ 1~3개를 생성하세요.
 
@@ -629,10 +1202,20 @@ def save_to_db(conn, article: Dict, faqs: List[Dict], treatment_key: str, treatm
     cur = conn.cursor()
     saved = 0
 
+    # 치료법 설정에서 카테고리 기본값 가져오기
+    tconfig = TREATMENT_QUERIES.get(treatment_key, {})
+    default_category = tconfig.get('category', 'CANCER')
+
     for idx, faq in enumerate(faqs):
         try:
             vec_faq = embed_text(faq['question'])
             vec_faq_str = '[' + ','.join(str(v) for v in vec_faq) + ']'
+
+            # FAQ에서 카테고리 가져오되, 없으면 치료법 설정의 기본값 사용
+            faq_category = faq.get('category', default_category)
+            # 유효한 카테고리만 허용
+            if faq_category not in ('CANCER', 'NERVE', 'GENERAL'):
+                faq_category = default_category
 
             faq_metadata = json.dumps({
                 'pmid': article['pmid'],
@@ -667,7 +1250,7 @@ def save_to_db(conn, article: Dict, faqs: List[Dict], treatment_key: str, treatm
                     faq['answer'],
                     faq_metadata,
                     vec_faq_str,
-                    faq.get('category', 'CANCER'),
+                    faq_category,
                     source_url,
                     article['title'][:200],
                 ),
@@ -779,11 +1362,8 @@ def sync(
                     log.info(f'  │ {article["authors"]} | {article["journal"]} ({article["year"]})')
 
                     # 4a) 긍정/부정 판별
-                    # 자율신경실조증 등 질환 카테고리는 lenient 모드 (유용한 정보면 통과)
-                    LENIENT_KEYS = {'dysautonomia_cause', 'dysautonomia_symptom',
-                                    'dysautonomia_diagnosis', 'dysautonomia_treatment',
-                                    'dysautonomia_cancer'}
-                    is_lenient = treatment in LENIENT_KEYS
+                    # lenient 모드: 질환 정보/검사 해석 카테고리는 유용한 정보면 통과
+                    is_lenient = tconfig.get('lenient', False)
                     sentiment = classify_sentiment(article, treatment_ko, lenient=is_lenient)
                     log.info(f'  │ 감성 판별: {sentiment}' + (' (완화 기준)' if is_lenient else ''))
 
@@ -872,34 +1452,111 @@ if __name__ == '__main__':
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 사용 예시:
-  python pubmed_sync.py -t all -n 10              # 전체 치료법, 치료법당 10편
-  python pubmed_sync.py -t hyperthermia vitamin_c  # 특정 치료법만
+  python pubmed_sync.py -t all -n 10              # 전체 카테고리, 카테고리당 10편
+  python pubmed_sync.py -t hyperthermia vitamin_c  # 특정 카테고리만
   python pubmed_sync.py --dry-run -t all -n 5      # 시뮬레이션 (DB 저장 안함)
   python pubmed_sync.py -t all -n 30 --years 10    # 최근 10년 논문
+  python pubmed_sync.py -g lab -n 15               # 혈액/소변검사 그룹만 실행
+  python pubmed_sync.py -g tumor_marker -n 10      # 종양표지자 그룹만 실행
 
-치료법 키워드:
-  hyperthermia      고주파온열치료
-  hyperbaric_oxygen 고압산소치료
-  immuncell         면역세포치료(이뮨셀)
-  selenium          세레늄
-  thymosin          싸이모신
-  mistletoe         미슬토
-  polysaccharide    폴리사카라이드
-  vitamin_c         고용량비타민C
+카테고리 그룹 (-g 옵션):
+  cancer_treatment  암 보조치료 (고주파, 고압산소, 이뮨셀 등)
+  cancer_nutrition  암환자 영양/음식 (녹차, 강황, 오메가3 등)
+  tumor_marker      종양표지자 (CEA, AFP, CA19-9, CA-125, PSA 등)
+  lab               혈액/소변검사 해석 (CBC, LFT, 신장, 당뇨, 지질 등)
+  dysautonomia      자율신경실조증 (원인, 증상, 진단, 치료)
+  chronic           만성질환 지표 (대사증후군, 당뇨전단계, 심혈관 등)
+  hbot_diabetic     고압산소치료-당뇨발 (임상결과, RCT, 리뷰, 보험급여)
+
+개별 카테고리 키워드 (-t 옵션):
+  [암 보조치료]
+  hyperthermia       고주파온열치료     | hyperbaric_oxygen  고압산소치료
+  immuncell          면역세포치료       | selenium           세레늄
+  thymosin           싸이모신           | mistletoe          미슬토
+  polysaccharide     폴리사카라이드     | vitamin_c          고용량비타민C
+
+  [혈액검사/소변검사]
+  cbc_interpretation CBC 해석           | anemia_diagnosis   빈혈 감별진단
+  liver_function     간기능검사(LFT)    | fatty_liver        지방간
+  renal_function     신장기능검사       | diabetes_screening 당뇨/혈당
+  lipid_panel        지질검사           | thyroid_function   갑상선기능
+  inflammation_marker 염증표지자(CRP)   | electrolyte_imbalance 전해질이상
+  urinalysis_general 소변검사           | proteinuria        단백뇨
+  hematuria          혈뇨               | urine_glucose      요당
+
+  [종양표지자]
+  tumor_marker_general 종양표지자 개요  | cea_marker         CEA
+  afp_marker         AFP                | ca19_9_marker      CA 19-9
+  ca125_marker       CA-125             | psa_marker         PSA
+  blood_cancer_screening 혈액 암선별    | cancer_blood_abnormality 암의심 혈액이상
+  ldh_cancer         LDH와 암           | thyroid_cancer_marker 갑상선암 표지자
+
+  [자율신경실조증]
+  dysautonomia_cause  원인    | dysautonomia_symptom  증상
+  dysautonomia_diagnosis 진단 | dysautonomia_treatment 치료
+  dysautonomia_cancer 암환자  | dysautonomia_lab      혈액검사
+
+  [만성질환/영양]
+  metabolic_syndrome  대사증후군         | prediabetes_marker 당뇨전단계
+  early_ckd          만성신장병 조기     | cardiovascular_risk_marker 심혈관위험
+  vitamin_d_deficiency 비타민D 결핍      | vitamin_b12_folate 비타민B12/엽산
         """,
     )
+    # 카테고리 그룹 정의
+    GROUPS = {
+        'cancer_treatment': [
+            'hyperthermia', 'hyperbaric_oxygen', 'immuncell', 'selenium',
+            'thymosin', 'mistletoe', 'polysaccharide', 'vitamin_c',
+        ],
+        'cancer_nutrition': [
+            'green_tea', 'curcumin', 'cruciferous', 'omega3', 'mushroom',
+            'garlic', 'probiotics', 'ginger', 'berry', 'soy',
+        ],
+        'tumor_marker': [
+            'tumor_marker_general', 'cea_marker', 'afp_marker', 'ca19_9_marker',
+            'ca125_marker', 'psa_marker', 'blood_cancer_screening',
+            'cancer_blood_abnormality', 'ldh_cancer', 'thyroid_cancer_marker',
+        ],
+        'lab': [
+            'cbc_interpretation', 'anemia_diagnosis', 'electrolyte_imbalance',
+            'liver_function', 'fatty_liver', 'renal_function',
+            'diabetes_screening', 'lipid_panel', 'thyroid_function',
+            'inflammation_marker', 'urinalysis_general', 'proteinuria',
+            'hematuria', 'urine_glucose',
+        ],
+        'dysautonomia': [
+            'dysautonomia_cause', 'dysautonomia_symptom', 'dysautonomia_diagnosis',
+            'dysautonomia_treatment', 'dysautonomia_cancer', 'dysautonomia_lab',
+        ],
+        'chronic': [
+            'metabolic_syndrome', 'prediabetes_marker', 'early_ckd',
+            'cardiovascular_risk_marker', 'vitamin_d_deficiency', 'vitamin_b12_folate',
+        ],
+        'hbot_diabetic': [
+            'hbot_diabetic_foot', 'hbot_diabetic_foot_rct',
+            'hbot_diabetic_foot_review', 'hbot_diabetic_foot_insurance',
+        ],
+    }
+
     parser.add_argument(
         '--treatments', '-t',
         nargs='+',
         choices=list(TREATMENT_QUERIES.keys()) + ['all'],
-        default=['all'],
-        help='치료법 선택 (기본: all)',
+        default=None,
+        help='개별 카테고리 선택',
+    )
+    parser.add_argument(
+        '--group', '-g',
+        nargs='+',
+        choices=list(GROUPS.keys()) + ['all'],
+        default=None,
+        help='카테고리 그룹 선택 (lab, tumor_marker, dysautonomia 등)',
     )
     parser.add_argument(
         '--max-per-treatment', '-n',
         type=int,
         default=10,
-        help='치료법당 최대 논문 수 (기본: 10)',
+        help='카테고리당 최대 논문 수 (기본: 10)',
     )
     parser.add_argument(
         '--years', '-y',
@@ -915,8 +1572,30 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    # 'all' 처리
-    targets = list(TREATMENT_QUERIES.keys()) if 'all' in args.treatments else args.treatments
+    # 타겟 결정: -g 그룹 > -t 개별 > 기본 all
+    targets = []
+    if args.group:
+        if 'all' in args.group:
+            targets = list(TREATMENT_QUERIES.keys())
+        else:
+            for g in args.group:
+                targets.extend(GROUPS.get(g, []))
+    elif args.treatments:
+        if 'all' in args.treatments:
+            targets = list(TREATMENT_QUERIES.keys())
+        else:
+            targets = args.treatments
+    else:
+        targets = list(TREATMENT_QUERIES.keys())
+
+    # 중복 제거 (순서 유지)
+    seen = set()
+    unique_targets = []
+    for t in targets:
+        if t not in seen:
+            seen.add(t)
+            unique_targets.append(t)
+    targets = unique_targets
 
     result = sync(
         treatments=targets,

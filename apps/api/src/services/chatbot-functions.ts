@@ -1005,6 +1005,41 @@ const SCHEDULING_WRITE_FUNCTIONS = [
       required: ['patientName'],
     },
   },
+  {
+    name: 'modifyManualTherapySlot',
+    description: '도수치료 예약을 변경합니다. "변경/수정/옮겨줘/바꿔줘" 키워드 시 사용.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름' },
+        date: { type: S.STRING, description: '기존 예약 날짜 YYYY-MM-DD (선택)' },
+        newDate: { type: S.STRING, description: '새 날짜 YYYY-MM-DD (선택)' },
+        newTime: { type: S.STRING, description: '새 시간 HH:MM (선택)' },
+        newTherapistName: { type: S.STRING, description: '새 치료사 이름 (선택)' },
+        treatmentCodes: { type: S.ARRAY, items: { type: S.STRING }, description: '새 치료코드 배열 (선택)' },
+        reason: { type: S.STRING, description: '변경 사유 (선택)' },
+      },
+      required: ['patientName'],
+    },
+  },
+  {
+    name: 'modifyRfScheduleSlot',
+    description: '고주파(RF) 예약을 변경합니다. "변경/수정/옮겨줘/바꿔줘" 키워드 시 사용.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        patientName: { type: S.STRING, description: '환자 이름' },
+        date: { type: S.STRING, description: '기존 예약 날짜 YYYY-MM-DD (선택)' },
+        newDate: { type: S.STRING, description: '새 날짜 YYYY-MM-DD (선택)' },
+        newTime: { type: S.STRING, description: '새 시작시간 HH:MM (선택)' },
+        newRoomName: { type: S.STRING, description: '새 기계번호 (선택)' },
+        newDuration: { type: S.NUMBER, description: '새 소요시간 분 (선택)' },
+        newDoctorCode: { type: S.STRING, description: '새 담당의 C/J (선택)' },
+        reason: { type: S.STRING, description: '변경 사유 (선택)' },
+      },
+      required: ['patientName'],
+    },
+  },
 ];
 
 // ── 기존 WRITE 6개 ──
@@ -1117,8 +1152,8 @@ export const ALL_FUNCTION_DECLARATIONS = [
 export const WRITE_FUNCTION_NAMES = new Set([
   'createAppointment', 'modifyAppointment', 'cancelAppointment',
   'createProcedurePlan', 'modifyProcedurePlan', 'cancelProcedurePlan',
-  'createManualTherapySlot', 'cancelManualTherapySlot',
-  'createRfScheduleSlot', 'cancelRfScheduleSlot',
+  'createManualTherapySlot', 'modifyManualTherapySlot', 'cancelManualTherapySlot',
+  'createRfScheduleSlot', 'modifyRfScheduleSlot', 'cancelRfScheduleSlot',
 ]);
 
 // ═══════════════════════════════════════════════════════════

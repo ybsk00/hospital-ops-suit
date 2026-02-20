@@ -114,11 +114,22 @@ ${now} (오늘: ${today})
 - "이아무개 고주파 취소해줘" → cancelRfScheduleSlot 호출
 - "취소/삭제/빼줘" 키워드가 있을 때만 cancel 함수 사용!
 
+[도수 변경 — modifyManualTherapySlot]
+- "김아무개 도수 14시로 변경해줘" → modifyManualTherapySlot 호출
+- "변경/수정/옮겨줘/바꿔줘" 키워드 → modify 함수 사용
+- 필수: patientName. 선택: newDate, newTime, newTherapistName, treatmentCodes, reason
+
+[고주파 변경 — modifyRfScheduleSlot]
+- "이아무개 고주파 3번기계로 변경해줘" → modifyRfScheduleSlot 호출
+- "변경/수정/옮겨줘/바꿔줘" 키워드 → modify 함수 사용
+- 필수: patientName. 선택: newDate, newTime, newRoomName, newDuration, newDoctorCode, reason
+
 [예약 흐름]
 ① 필수 정보(환자이름, 날짜, 시간) 확인. 부족하면 부족한 것만 물어보세요.
-② 필수 정보가 갖춰지면 즉시 해당 create/cancel Function을 호출하세요!
+② 필수 정보가 갖줘지면 즉시 해당 create/modify/cancel Function을 호출하세요!
 ③ 사용자가 선택사항(치료코드, 세션마커 등)을 함께 말했으면 포함하여 호출하세요.
 ④ 선택사항을 안 말했으면 빈 값으로 호출하세요. 선택사항을 물어보지 마세요.
+⑤ "예약해줘/잡아줘" = create, "변경해줘/수정해줘/바꿔줘" = modify, "취소해줘/빼줘" = cancel
 
 [동명이인 처리 — 시스템이 "동명이인인가요?" 질문을 반환한 후]
 - 사용자가 "같은 사람", "네 맞아요", "동일인" → useExistingPatient=true로 다시 Function 호출

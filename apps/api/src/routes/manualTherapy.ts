@@ -120,6 +120,71 @@ router.get(
   }),
 );
 
+// ─── GET /api/manual-therapy/monthly ── 월간 집계 조회 ───
+router.get(
+  '/monthly',
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const year = parseInt(req.query.year as string, 10) || new Date().getFullYear();
+    const month = parseInt(req.query.month as string, 10) || (new Date().getMonth() + 1);
+
+    const startDate = new Date(`${year}-${String(month).padStart(2, '0')}-01`);
+    const endDate = new Date(year, month, 0); // 해당 월 마지막 날
+
+    const therapists = await prisma.therapist.findMany({
+      where: { deletedAt: null, isActive: true, specialty: '도수' },
+      orderBy: { name: 'asc' },
+    });
+
+    const slots = await prisma.manualTherapySlot.findMany({
+      where: {
+        deletedAt: null,
+        date: { gte: startDate, lte: endDate },
+      },
+      select: { date: true, therapistId: true, status: true },
+    });
+
+    // 날짜별 집계
+    const days: Record<string, any> = {};
+    for (const slot of slots) {
+      const dateStr = slot.date.toISOString().slice(0, 10);
+      if (!days[dateStr]) {
+        days[dateStr] = {
+          total: 0,
+          byStatus: { BOOKED: 0, COMPLETED: 0, NO_SHOW: 0, CANCELLED: 0 },
+          byTherapist: {} as Record<string, { total: number; booked: number }>,
+        };
+      }
+      const day = days[dateStr];
+      day.total++;
+      if (day.byStatus[slot.status] !== undefined) day.byStatus[slot.status]++;
+      if (!day.byTherapist[slot.therapistId]) {
+        day.byTherapist[slot.therapistId] = { total: 0, booked: 0 };
+      }
+      day.byTherapist[slot.therapistId].total++;
+      if (slot.status === 'BOOKED') day.byTherapist[slot.therapistId].booked++;
+    }
+
+    const stats = {
+      totalBooked: slots.filter(s => s.status === 'BOOKED').length,
+      totalCompleted: slots.filter(s => s.status === 'COMPLETED').length,
+      noShows: slots.filter(s => s.status === 'NO_SHOW').length,
+      cancelled: slots.filter(s => s.status === 'CANCELLED').length,
+    };
+
+    res.json({
+      success: true,
+      data: {
+        year,
+        month,
+        therapists: therapists.map(t => ({ id: t.id, name: t.name })),
+        days,
+        stats,
+      },
+    });
+  }),
+);
+
 // ─── GET /api/manual-therapy/slots ── 슬롯 목록 (필터) ───
 router.get(
   '/slots',

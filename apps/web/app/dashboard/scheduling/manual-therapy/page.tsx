@@ -508,12 +508,33 @@ function RemarkEditor({
   );
 }
 
+// ─── Types for monthly ───
+interface MonthlyData {
+  year: number;
+  month: number;
+  therapists: { id: string; name: string }[];
+  days: Record<string, {
+    total: number;
+    byStatus: Record<string, number>;
+    byTherapist: Record<string, { total: number; booked: number }>;
+  }>;
+  stats: { totalBooked: number; totalCompleted: number; noShows: number; cancelled: number };
+}
+
+type ViewMode = 'weekly' | 'monthly';
+
 // ─── Main Page ───
 export default function ManualTherapyPage() {
   const { accessToken } = useAuthStore();
+  const [viewMode, setViewMode] = useState<ViewMode>('weekly');
   const [weekDate, setWeekDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [data, setData] = useState<WeeklyData | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Monthly state
+  const [monthYear, setMonthYear] = useState(() => new Date().getFullYear());
+  const [monthNum, setMonthNum] = useState(() => new Date().getMonth() + 1);
+  const [monthlyData, setMonthlyData] = useState<MonthlyData | null>(null);
 
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -535,9 +556,23 @@ export default function ManualTherapyPage() {
     }
   }, [accessToken, weekDate]);
 
+  const fetchMonthlyData = useCallback(async () => {
+    if (!accessToken) return;
+    setLoading(true);
+    try {
+      const res = await api<MonthlyData>(`/api/manual-therapy/monthly?year=${monthYear}&month=${monthNum}`, { token: accessToken });
+      setMonthlyData(res.data || null);
+    } catch (err: any) {
+      console.error('Failed to load monthly schedule:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [accessToken, monthYear, monthNum]);
+
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (viewMode === 'weekly') fetchData();
+    else fetchMonthlyData();
+  }, [viewMode, fetchData, fetchMonthlyData]);
 
   const openSlotModal = (therapist: Therapist, date: string, timeSlot: string, slot: SlotData | null) => {
     setModalTherapist(therapist);
@@ -554,7 +589,40 @@ export default function ManualTherapyPage() {
 
   const goToday = () => setWeekDate(new Date().toISOString().slice(0, 10));
 
-  if (!data && loading) {
+  // 월간 네비게이션
+  const shiftMonth = (offset: number) => {
+    let y = monthYear;
+    let m = monthNum + offset;
+    if (m > 12) { m = 1; y++; }
+    if (m < 1) { m = 12; y--; }
+    setMonthYear(y);
+    setMonthNum(m);
+  };
+
+  const goThisMonth = () => {
+    setMonthYear(new Date().getFullYear());
+    setMonthNum(new Date().getMonth() + 1);
+  };
+
+  // 월간 → 주간 전환
+  const navigateToWeek = (dateStr: string) => {
+    setWeekDate(dateStr);
+    setViewMode('weekly');
+  };
+
+  // 월간 캘린더 날짜 배열 생성
+  const getMonthCalendarDays = (year: number, month: number): (string | null)[] => {
+    const firstDay = new Date(year, month - 1, 1).getDay(); // 0=일
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const days: (string | null)[] = [];
+    for (let i = 0; i < firstDay; i++) days.push(null); // 이전 달 패딩
+    for (let d = 1; d <= daysInMonth; d++) {
+      days.push(`${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+    }
+    return days;
+  };
+
+  if (loading && !data && !monthlyData) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-slate-400">로딩 중...</div>
@@ -562,15 +630,8 @@ export default function ManualTherapyPage() {
     );
   }
 
-  if (!data) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-slate-400">데이터를 불러올 수 없습니다.</div>
-      </div>
-    );
-  }
-
-  const { week, therapists, timeSlots, grid, remarks, stats } = data;
+  const currentStats = viewMode === 'weekly' ? data?.stats : monthlyData?.stats;
+  const { week, therapists, timeSlots, grid, remarks, stats } = data || { week: { start: '', end: '' }, therapists: [] as Therapist[], timeSlots: [] as string[], grid: {} as Record<string, Record<string, Record<string, any>>>, remarks: [] as any[], stats: { totalBooked: 0, totalCompleted: 0, noShows: 0, cancelled: 0 } };
   const weekDates: string[] = [];
   const startD = new Date(week.start + 'T00:00:00');
   for (let i = 0; i < 6; i++) {
@@ -595,9 +656,25 @@ export default function ManualTherapyPage() {
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">도수예약 현황</h1>
-          <p className="text-sm text-slate-500 mt-0.5">주간 도수치료 예약 관리</p>
+        <div className="flex items-center gap-4">
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">도수예약 현황</h1>
+            <p className="text-sm text-slate-500 mt-0.5">{viewMode === 'weekly' ? '주간' : '월간'} 도수치료 예약 관리</p>
+          </div>
+          <div className="flex bg-slate-100 rounded-lg p-0.5">
+            <button
+              onClick={() => setViewMode('weekly')}
+              className={`px-3 py-1 text-sm rounded-md transition ${viewMode === 'weekly' ? 'bg-white text-blue-600 shadow-sm font-medium' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              주간
+            </button>
+            <button
+              onClick={() => setViewMode('monthly')}
+              className={`px-3 py-1 text-sm rounded-md transition ${viewMode === 'monthly' ? 'bg-white text-blue-600 shadow-sm font-medium' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              월간
+            </button>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 text-sm text-slate-500 mr-4">
@@ -605,18 +682,102 @@ export default function ManualTherapyPage() {
             <span className="inline-block w-3 h-3 rounded bg-green-100 border border-green-200 ml-2" /> 외래
             <span className="inline-block w-3 h-3 rounded bg-yellow-50 border border-yellow-300 ml-2" /> 노쇼
           </div>
-          <div className="flex items-center gap-1 text-xs bg-slate-100 rounded-lg px-3 py-1.5">
-            <span>예약 {stats.totalBooked}</span>
-            <span className="text-slate-300 mx-1">|</span>
-            <span className="text-green-600">완료 {stats.totalCompleted}</span>
-            <span className="text-slate-300 mx-1">|</span>
-            <span className="text-yellow-600">노쇼 {stats.noShows}</span>
-            <span className="text-slate-300 mx-1">|</span>
-            <span className="text-red-600">취소 {stats.cancelled}</span>
-          </div>
+          {currentStats && (
+            <div className="flex items-center gap-1 text-xs bg-slate-100 rounded-lg px-3 py-1.5">
+              <span>예약 {currentStats.totalBooked}</span>
+              <span className="text-slate-300 mx-1">|</span>
+              <span className="text-green-600">완료 {currentStats.totalCompleted}</span>
+              <span className="text-slate-300 mx-1">|</span>
+              <span className="text-yellow-600">노쇼 {currentStats.noShows}</span>
+              <span className="text-slate-300 mx-1">|</span>
+              <span className="text-red-600">취소 {currentStats.cancelled}</span>
+            </div>
+          )}
         </div>
       </div>
 
+      {/* Monthly View */}
+      {viewMode === 'monthly' && (
+        <>
+          {/* Month Nav */}
+          <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-2.5">
+            <button onClick={() => shiftMonth(-1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition">
+              <ChevronLeft size={20} />
+            </button>
+            <div className="flex items-center gap-3">
+              <span className="font-semibold text-slate-800">{monthYear}년 {monthNum}월</span>
+              <button onClick={goThisMonth} className="text-xs px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100">
+                이번달
+              </button>
+            </div>
+            <button onClick={() => shiftMonth(1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition">
+              <ChevronRight size={20} />
+            </button>
+          </div>
+
+          {/* Monthly Calendar Grid */}
+          <div className="bg-white rounded-lg border overflow-hidden">
+            {/* Day headers */}
+            <div className="grid grid-cols-7 border-b">
+              {['일', '월', '화', '수', '목', '금', '토'].map((d, i) => (
+                <div key={d} className={`text-center text-xs font-semibold py-2 ${i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-slate-500'}`}>
+                  {d}
+                </div>
+              ))}
+            </div>
+            {/* Calendar cells */}
+            <div className="grid grid-cols-7">
+              {getMonthCalendarDays(monthYear, monthNum).map((dateStr, idx) => {
+                const dayData = dateStr ? monthlyData?.days?.[dateStr] : null;
+                const isToday = dateStr === new Date().toISOString().slice(0, 10);
+                const dayOfWeek = idx % 7;
+
+                return (
+                  <div
+                    key={idx}
+                    onClick={() => dateStr && navigateToWeek(dateStr)}
+                    className={`min-h-[90px] border-b border-r p-1.5 transition ${
+                      dateStr ? 'cursor-pointer hover:bg-blue-50/50' : 'bg-slate-50'
+                    } ${dayOfWeek === 0 ? 'bg-red-50/30' : ''} ${dayOfWeek === 6 ? 'bg-blue-50/30' : ''}`}
+                  >
+                    {dateStr && (
+                      <>
+                        <div className={`text-xs font-medium mb-1 ${isToday ? 'bg-blue-600 text-white rounded-full w-5 h-5 flex items-center justify-center' : dayOfWeek === 0 ? 'text-red-400' : dayOfWeek === 6 ? 'text-blue-400' : 'text-slate-600'}`}>
+                          {parseInt(dateStr.split('-')[2], 10)}
+                        </div>
+                        {dayData && dayData.total > 0 && (
+                          <div className="space-y-0.5">
+                            <div className="text-xs font-semibold text-blue-600">{dayData.total}건</div>
+                            {monthlyData?.therapists?.map((t) => {
+                              const td = dayData.byTherapist?.[t.id];
+                              if (!td || td.total === 0) return null;
+                              return (
+                                <div key={t.id} className="text-[10px] text-slate-500 truncate">
+                                  {t.name} {td.total}
+                                </div>
+                              );
+                            })}
+                            {(dayData.byStatus.NO_SHOW > 0 || dayData.byStatus.CANCELLED > 0) && (
+                              <div className="text-[10px]">
+                                {dayData.byStatus.NO_SHOW > 0 && <span className="text-yellow-600">노쇼{dayData.byStatus.NO_SHOW} </span>}
+                                {dayData.byStatus.CANCELLED > 0 && <span className="text-red-500">취소{dayData.byStatus.CANCELLED}</span>}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Weekly View */}
+      {viewMode === 'weekly' && data && (
+      <>
       {/* Week Nav */}
       <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-2.5">
         <button
@@ -712,7 +873,7 @@ export default function ManualTherapyPage() {
                         <div className="text-xs leading-tight">
                           <div className="font-medium text-slate-800 truncate">{slot.patientName}</div>
                           <div className="flex items-center gap-0.5 flex-wrap mt-0.5">
-                            {slot.treatmentCodes?.map((code) => {
+                            {slot.treatmentCodes?.map((code: string) => {
                               const tc = TREATMENT_CODES.find((c) => c.code === code);
                               return (
                                 <span
@@ -742,6 +903,9 @@ export default function ManualTherapyPage() {
           <RemarkEditor remarks={remarks} weekDates={weekDates} accessToken={accessToken || ''} onUpdate={fetchData} />
         </div>
       </div>
+
+      </>
+      )}
 
       {/* Modal */}
       {modalTherapist && (

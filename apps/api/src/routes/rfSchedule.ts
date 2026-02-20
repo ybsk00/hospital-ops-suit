@@ -135,6 +135,170 @@ router.get(
   }),
 );
 
+// ─── 주간 날짜 배열 (월~토 6일) ───
+function getWeekDates(dateStr: string): string[] {
+  const d = new Date(dateStr + 'T00:00:00');
+  const day = d.getDay();
+  const monday = new Date(d);
+  monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+  const dates: string[] = [];
+  for (let i = 0; i < 6; i++) {
+    const dd = new Date(monday);
+    dd.setDate(monday.getDate() + i);
+    dates.push(dd.toISOString().slice(0, 10));
+  }
+  return dates;
+}
+
+// ─── GET /api/rf-schedule/weekly ── 주간 집계 조회 ───
+router.get(
+  '/weekly',
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const dateParam = (req.query.date as string) || new Date().toISOString().slice(0, 10);
+    const weekDates = getWeekDates(dateParam);
+    const startDate = weekDates[0];
+    const endDate = weekDates[weekDates.length - 1];
+
+    const rooms = await prisma.rfTreatmentRoom.findMany({
+      where: { isActive: true },
+      orderBy: { displayOrder: 'asc' },
+    });
+
+    const slots = await prisma.rfScheduleSlot.findMany({
+      where: {
+        deletedAt: null,
+        date: { gte: new Date(startDate), lte: new Date(endDate) },
+      },
+      include: {
+        patient: { select: { id: true, name: true, emrPatientId: true } },
+      },
+      orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
+    });
+
+    const staffNotes = await prisma.staffDayNote.findMany({
+      where: {
+        noteType: 'RF_STAFF_NOTE',
+        date: { gte: new Date(startDate), lte: new Date(endDate) },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    // 날짜별 집계
+    const days: Record<string, any> = {};
+    for (const slot of slots) {
+      const dateStr = slot.date.toISOString().slice(0, 10);
+      if (!days[dateStr]) {
+        days[dateStr] = {
+          total: 0,
+          byStatus: { BOOKED: 0, COMPLETED: 0, NO_SHOW: 0, CANCELLED: 0 },
+          byRoom: {} as Record<string, { count: number; slots: any[] }>,
+        };
+      }
+      const day = days[dateStr];
+      day.total++;
+      if (day.byStatus[slot.status] !== undefined) day.byStatus[slot.status]++;
+      if (!day.byRoom[slot.roomId]) {
+        day.byRoom[slot.roomId] = { count: 0, slots: [] };
+      }
+      day.byRoom[slot.roomId].count++;
+      day.byRoom[slot.roomId].slots.push({
+        startTime: slot.startTime,
+        duration: slot.duration,
+        patientName: slot.patient?.name || slot.patientName || '',
+        doctorCode: slot.doctorCode,
+        status: slot.status,
+      });
+    }
+
+    const stats = {
+      totalBooked: slots.filter(s => s.status === 'BOOKED').length,
+      totalCompleted: slots.filter(s => s.status === 'COMPLETED').length,
+      noShows: slots.filter(s => s.status === 'NO_SHOW').length,
+      cancelled: slots.filter(s => s.status === 'CANCELLED').length,
+    };
+
+    res.json({
+      success: true,
+      data: {
+        week: { start: startDate, end: endDate },
+        rooms: rooms.map(r => ({ id: r.id, name: r.name, displayOrder: r.displayOrder })),
+        days,
+        staffNotes: staffNotes.map(n => ({
+          id: n.id,
+          date: n.date.toISOString().slice(0, 10),
+          content: n.content,
+          targetId: n.targetId,
+        })),
+        stats,
+      },
+    });
+  }),
+);
+
+// ─── GET /api/rf-schedule/monthly ── 월간 집계 조회 ───
+router.get(
+  '/monthly',
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const year = parseInt(req.query.year as string, 10) || new Date().getFullYear();
+    const month = parseInt(req.query.month as string, 10) || (new Date().getMonth() + 1);
+
+    const startDate = new Date(`${year}-${String(month).padStart(2, '0')}-01`);
+    const endDate = new Date(year, month, 0);
+
+    const rooms = await prisma.rfTreatmentRoom.findMany({
+      where: { isActive: true },
+      orderBy: { displayOrder: 'asc' },
+    });
+
+    const slots = await prisma.rfScheduleSlot.findMany({
+      where: {
+        deletedAt: null,
+        date: { gte: startDate, lte: endDate },
+      },
+      select: { date: true, roomId: true, status: true },
+    });
+
+    const days: Record<string, any> = {};
+    for (const slot of slots) {
+      const dateStr = slot.date.toISOString().slice(0, 10);
+      if (!days[dateStr]) {
+        days[dateStr] = {
+          total: 0,
+          byStatus: { BOOKED: 0, COMPLETED: 0, NO_SHOW: 0, CANCELLED: 0 },
+          byRoom: {} as Record<string, { count: number }>,
+        };
+      }
+      const day = days[dateStr];
+      day.total++;
+      if (day.byStatus[slot.status] !== undefined) day.byStatus[slot.status]++;
+      if (!day.byRoom[slot.roomId]) {
+        day.byRoom[slot.roomId] = { count: 0 };
+      }
+      day.byRoom[slot.roomId].count++;
+    }
+
+    const stats = {
+      totalBooked: slots.filter(s => s.status === 'BOOKED').length,
+      totalCompleted: slots.filter(s => s.status === 'COMPLETED').length,
+      noShows: slots.filter(s => s.status === 'NO_SHOW').length,
+      cancelled: slots.filter(s => s.status === 'CANCELLED').length,
+    };
+
+    res.json({
+      success: true,
+      data: {
+        year,
+        month,
+        rooms: rooms.map(r => ({ id: r.id, name: r.name, displayOrder: r.displayOrder })),
+        days,
+        stats,
+      },
+    });
+  }),
+);
+
 // ─── GET /api/rf-schedule/slots ── 슬롯 필터 조회 ───
 router.get(
   '/slots',

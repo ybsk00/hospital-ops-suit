@@ -32,8 +32,10 @@ const FUNCTION_PERMISSION_MAP: Record<string, { resource: PermissionResource; ac
   modifyProcedurePlan: { resource: 'PROCEDURES', action: 'WRITE' },
   cancelProcedurePlan: { resource: 'PROCEDURES', action: 'WRITE' },
   createManualTherapySlot: { resource: 'SCHEDULING', action: 'WRITE' },
+  modifyManualTherapySlot: { resource: 'SCHEDULING', action: 'WRITE' },
   cancelManualTherapySlot: { resource: 'SCHEDULING', action: 'WRITE' },
   createRfScheduleSlot: { resource: 'SCHEDULING', action: 'WRITE' },
+  modifyRfScheduleSlot: { resource: 'SCHEDULING', action: 'WRITE' },
   cancelRfScheduleSlot: { resource: 'SCHEDULING', action: 'WRITE' },
 };
 
@@ -114,10 +116,14 @@ export async function handleWriteFunction(
       return handleCancelProcedurePlan(args, user, sessionId);
     case 'createManualTherapySlot':
       return handleCreateManualTherapySlot(args, user, sessionId);
+    case 'modifyManualTherapySlot':
+      return handleModifyManualTherapySlot(args, user, sessionId);
     case 'cancelManualTherapySlot':
       return handleCancelManualTherapySlot(args, user, sessionId);
     case 'createRfScheduleSlot':
       return handleCreateRfScheduleSlot(args, user, sessionId);
+    case 'modifyRfScheduleSlot':
+      return handleModifyRfScheduleSlot(args, user, sessionId);
     case 'cancelRfScheduleSlot':
       return handleCancelRfScheduleSlot(args, user, sessionId);
     default:
@@ -921,6 +927,29 @@ export async function confirmPendingAction(
         break;
       }
 
+      case 'modifyManualTherapySlot': {
+        const mtUpdateData: any = { version: { increment: 1 } };
+        if (payload.newDate) mtUpdateData.date = new Date(payload.newDate);
+        if (payload.newTime) mtUpdateData.timeSlot = payload.newTime;
+        if (payload.newTherapistId) mtUpdateData.therapistId = payload.newTherapistId;
+        if (payload.treatmentCodes) mtUpdateData.treatmentCodes = payload.treatmentCodes;
+
+        await prisma.manualTherapySlot.update({
+          where: { id: payload.slotId },
+          data: mtUpdateData,
+        });
+
+        resultId = payload.slotId;
+        resultType = 'ManualTherapySlot';
+
+        notifyDepartments('booking:modified', {
+          type: 'manualTherapy',
+          id: payload.slotId,
+          reason: payload.reason,
+        });
+        break;
+      }
+
       case 'cancelManualTherapySlot': {
         await prisma.manualTherapySlot.update({
           where: { id: payload.slotId },
@@ -964,6 +993,30 @@ export async function confirmPendingAction(
           patientName: payload.patientName,
           date: payload.date,
           time: payload.time,
+        });
+        break;
+      }
+
+      case 'modifyRfScheduleSlot': {
+        const rfUpdateData: any = { version: { increment: 1 } };
+        if (payload.newDate) rfUpdateData.date = new Date(payload.newDate);
+        if (payload.newTime) rfUpdateData.startTime = payload.newTime;
+        if (payload.newRoomId) rfUpdateData.roomId = payload.newRoomId;
+        if (payload.newDuration) rfUpdateData.duration = payload.newDuration;
+        if (payload.newDoctorCode) rfUpdateData.doctorCode = payload.newDoctorCode;
+
+        await prisma.rfScheduleSlot.update({
+          where: { id: payload.slotId },
+          data: rfUpdateData,
+        });
+
+        resultId = payload.slotId;
+        resultType = 'RfScheduleSlot';
+
+        notifyDepartments('booking:modified', {
+          type: 'rfTherapy',
+          id: payload.slotId,
+          reason: payload.reason,
         });
         break;
       }
@@ -1279,6 +1332,144 @@ async function handleCreateManualTherapySlot(
 }
 
 // ═══════════════════════════════════════════════════════════
+//  도수치료 예약 변경
+// ═══════════════════════════════════════════════════════════
+
+async function handleModifyManualTherapySlot(
+  args: Record<string, any>,
+  user: any,
+  sessionId: string,
+): Promise<WriteHandlerResult> {
+  console.log('[ChatbotWrite] Function: modifyManualTherapySlot, Args:', JSON.stringify(args));
+
+  const patientResult = await matchPatient(args.patientName);
+  if (patientResult.status === 'notFound') {
+    return { type: 'error', message: `"${args.patientName}" 환자를 찾을 수 없습니다.` };
+  }
+  if (patientResult.status === 'multiple') {
+    return {
+      type: 'disambiguation',
+      message: `"${args.patientName}" 이름의 환자가 여러 명입니다. 선택해 주세요.`,
+      patients: patientResult.patients.map((p) => ({ id: p.id, name: p.name, emrId: p.emrPatientId, dob: p.dob })),
+    };
+  }
+  const patient = patientResult.patient;
+
+  // 기존 슬롯 찾기
+  const where: any = {
+    patientId: patient.id,
+    deletedAt: null,
+    status: { not: 'CANCELLED' },
+  };
+  if (args.date) where.date = new Date(args.date);
+
+  const existingSlot = await prisma.manualTherapySlot.findFirst({
+    where,
+    include: { therapist: { select: { id: true, name: true } } },
+    orderBy: { date: 'asc' },
+  });
+
+  if (!existingSlot) {
+    return { type: 'error', message: `${patient.name} 환자의 도수치료 예약을 찾을 수 없습니다.` };
+  }
+
+  const targetDate = args.newDate || existingSlot.date.toISOString().slice(0, 10);
+  const targetTime = args.newTime || existingSlot.timeSlot;
+
+  // 치료사 결정
+  let newTherapistId = existingSlot.therapistId;
+  let newTherapistName = existingSlot.therapist.name;
+  if (args.newTherapistName) {
+    const therapistResult = await matchTherapist(args.newTherapistName);
+    if (therapistResult.status === 'notFound') {
+      return { type: 'error', message: `"${args.newTherapistName}" 치료사를 찾을 수 없습니다.` };
+    }
+    if (therapistResult.status === 'multiple') {
+      return { type: 'error', message: `"${args.newTherapistName}" 치료사가 여러 명입니다. 정확한 이름을 입력해주세요.` };
+    }
+    newTherapistId = therapistResult.therapist.id;
+    newTherapistName = therapistResult.therapist.name;
+  } else if (args.newTime || args.newDate) {
+    // 시간/날짜 변경 시 기존 치료사 가용성 확인
+    const conflict = await prisma.manualTherapySlot.findFirst({
+      where: {
+        therapistId: existingSlot.therapistId,
+        date: new Date(targetDate),
+        timeSlot: targetTime,
+        deletedAt: null,
+        status: { not: 'CANCELLED' },
+        id: { not: existingSlot.id },
+      },
+    });
+    if (conflict) {
+      // 기존 치료사 불가 → 자동 배정
+      const autoResult = await autoAssignTherapist(targetDate, targetTime);
+      if (!autoResult) {
+        return { type: 'error', message: `${targetDate} ${targetTime}에 가용한 치료사가 없습니다.` };
+      }
+      newTherapistId = autoResult.id;
+      newTherapistName = autoResult.name;
+    }
+  }
+
+  // 충돌 검사 (새 시간에 다른 슬롯)
+  if (args.newTime || args.newDate) {
+    const slotConflict = await prisma.manualTherapySlot.findFirst({
+      where: {
+        therapistId: newTherapistId,
+        date: new Date(targetDate),
+        timeSlot: targetTime,
+        deletedAt: null,
+        status: { not: 'CANCELLED' },
+        id: { not: existingSlot.id },
+      },
+    });
+    if (slotConflict) {
+      return { type: 'error', message: `${newTherapistName} 치료사의 ${targetDate} ${targetTime}에 이미 예약이 있습니다.` };
+    }
+  }
+
+  const displayData: Record<string, any> = {
+    actionLabel: '도수치료 예약 변경',
+    patientName: patient.name,
+    originalDate: existingSlot.date.toISOString().slice(0, 10),
+    originalTime: existingSlot.timeSlot,
+    originalTherapist: existingSlot.therapist.name,
+    newDate: targetDate,
+    newTime: targetTime,
+    newTherapist: newTherapistName,
+    reason: args.reason || null,
+  };
+  if (args.treatmentCodes) displayData.treatmentCodes = args.treatmentCodes;
+
+  const pending = await prisma.pendingAction.create({
+    data: {
+      sessionId,
+      actionType: 'modifyManualTherapySlot',
+      payload: {
+        slotId: existingSlot.id,
+        newDate: args.newDate || null,
+        newTime: args.newTime || null,
+        newTherapistId: newTherapistId !== existingSlot.therapistId ? newTherapistId : null,
+        treatmentCodes: args.treatmentCodes || null,
+        reason: args.reason || null,
+      },
+      displayData,
+      status: 'PENDING',
+      createdBy: user.id,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    },
+  });
+
+  return {
+    type: 'confirm',
+    message: `${patient.name} 환자의 도수치료 예약을 변경합니다. 확인해 주세요.`,
+    pendingId: pending.id,
+    displayData,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
 //  도수치료 예약 취소
 // ═══════════════════════════════════════════════════════════
 
@@ -1443,6 +1634,152 @@ async function handleCreateRfScheduleSlot(
     pendingId: pending.id,
     displayData,
   };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  고주파 예약 변경
+// ═══════════════════════════════════════════════════════════
+
+async function handleModifyRfScheduleSlot(
+  args: Record<string, any>,
+  user: any,
+  sessionId: string,
+): Promise<WriteHandlerResult> {
+  console.log('[ChatbotWrite] Function: modifyRfScheduleSlot, Args:', JSON.stringify(args));
+
+  const patientResult = await matchPatient(args.patientName);
+  if (patientResult.status === 'notFound') {
+    return { type: 'error', message: `"${args.patientName}" 환자를 찾을 수 없습니다.` };
+  }
+  if (patientResult.status === 'multiple') {
+    return {
+      type: 'disambiguation',
+      message: `"${args.patientName}" 이름의 환자가 여러 명입니다. 선택해 주세요.`,
+      patients: patientResult.patients.map((p) => ({ id: p.id, name: p.name, emrId: p.emrPatientId, dob: p.dob })),
+    };
+  }
+  const patient = patientResult.patient;
+
+  // 기존 슬롯 찾기
+  const where: any = {
+    patientId: patient.id,
+    deletedAt: null,
+    status: { not: 'CANCELLED' },
+  };
+  if (args.date) where.date = new Date(args.date);
+
+  const existingSlot = await prisma.rfScheduleSlot.findFirst({
+    where,
+    include: { room: { select: { id: true, name: true } } },
+    orderBy: { date: 'asc' },
+  });
+
+  if (!existingSlot) {
+    return { type: 'error', message: `${patient.name} 환자의 고주파 예약을 찾을 수 없습니다.` };
+  }
+
+  const targetDate = args.newDate || existingSlot.date.toISOString().slice(0, 10);
+  const targetTime = args.newTime || existingSlot.startTime;
+  const targetDuration = args.newDuration || existingSlot.duration;
+  const targetDoctorCode = args.newDoctorCode || existingSlot.doctorCode;
+
+  // 기계 결정
+  let newRoomId = existingSlot.roomId;
+  let newRoomName = existingSlot.room.name;
+  if (args.newRoomName) {
+    const room = await prisma.rfTreatmentRoom.findFirst({
+      where: { name: args.newRoomName, isActive: true },
+    });
+    if (!room) {
+      return { type: 'error', message: `${args.newRoomName}번 기계를 찾을 수 없습니다.` };
+    }
+    newRoomId = room.id;
+    newRoomName = room.name;
+  } else if (args.newTime || args.newDate || args.newDuration) {
+    // 시간/날짜/소요시간 변경 시 기존 기계 충돌 확인
+    const newStartMin = timeToMinutes(targetTime);
+    const newEndMin = newStartMin + targetDuration;
+    const newBufferEnd = newEndMin + 30;
+
+    const existingSlots = await prisma.rfScheduleSlot.findMany({
+      where: {
+        roomId: existingSlot.roomId,
+        date: new Date(targetDate),
+        deletedAt: null,
+        status: { not: 'CANCELLED' },
+        id: { not: existingSlot.id },
+      },
+    });
+
+    let hasConflict = false;
+    for (const es of existingSlots) {
+      const esStartMin = timeToMinutes(es.startTime);
+      const esEndMin = esStartMin + es.duration;
+      const esBufferEnd = esEndMin + 30;
+      if (newStartMin < esBufferEnd && esStartMin < newBufferEnd) {
+        hasConflict = true;
+        break;
+      }
+    }
+
+    if (hasConflict) {
+      // 기존 기계 불가 → 자동 배정
+      const autoRoom = await autoAssignRfRoom(targetDate, targetTime, targetDuration);
+      if (!autoRoom) {
+        return { type: 'error', message: `${targetDate} ${targetTime}에 ${targetDuration}분 가용한 기계가 없습니다.` };
+      }
+      newRoomId = autoRoom.id;
+      newRoomName = autoRoom.name;
+    }
+  }
+
+  const displayData: Record<string, any> = {
+    actionLabel: '고주파 예약 변경',
+    patientName: patient.name,
+    originalDate: existingSlot.date.toISOString().slice(0, 10),
+    originalTime: existingSlot.startTime,
+    originalRoom: existingSlot.room.name + '번',
+    originalDuration: existingSlot.duration + '분',
+    newDate: targetDate,
+    newTime: targetTime,
+    newRoom: newRoomName + '번',
+    newDuration: targetDuration + '분',
+    newDoctorCode: targetDoctorCode,
+    reason: args.reason || null,
+  };
+
+  const pending = await prisma.pendingAction.create({
+    data: {
+      sessionId,
+      actionType: 'modifyRfScheduleSlot',
+      payload: {
+        slotId: existingSlot.id,
+        newDate: args.newDate || null,
+        newTime: args.newTime || null,
+        newRoomId: newRoomId !== existingSlot.roomId ? newRoomId : null,
+        newDuration: args.newDuration || null,
+        newDoctorCode: args.newDoctorCode || null,
+        reason: args.reason || null,
+      },
+      displayData,
+      status: 'PENDING',
+      createdBy: user.id,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    },
+  });
+
+  return {
+    type: 'confirm',
+    message: `${patient.name} 환자의 고주파 예약을 변경합니다. 확인해 주세요.`,
+    pendingId: pending.id,
+    displayData,
+  };
+}
+
+// timeToMinutes 헬퍼 (rfSchedule.ts와 동일)
+function timeToMinutes(t: string): number {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
 }
 
 // ═══════════════════════════════════════════════════════════
