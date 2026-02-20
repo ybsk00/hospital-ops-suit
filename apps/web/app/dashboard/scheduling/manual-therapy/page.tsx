@@ -706,14 +706,14 @@ export default function ManualTherapyPage() {
           </div>
 
           {!monthlyData && !loading && (
-            <div className="bg-white rounded-lg border p-8 text-center text-slate-400">
-              데이터를 불러올 수 없습니다. API 서버 연결을 확인하세요.
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-700">
+              API 서버에서 데이터를 불러올 수 없습니다. API 재배포가 필요할 수 있습니다.
             </div>
           )}
 
-          {monthlyData && (() => {
+          {(() => {
             const dayCounts: Record<string, number> = {};
-            if (monthlyData.grid) {
+            if (monthlyData?.grid) {
               for (const tId of Object.keys(monthlyData.grid)) {
                 for (const dateStr of Object.keys(monthlyData.grid[tId] || {})) {
                   const cnt = Object.keys(monthlyData.grid[tId][dateStr] || {}).length;
@@ -770,8 +770,8 @@ export default function ManualTherapyPage() {
 
       {/* Weekly View - Error */}
       {viewMode === 'weekly' && !data && !loading && (
-        <div className="bg-white rounded-lg border p-8 text-center text-slate-400">
-          데이터를 불러올 수 없습니다. API 서버 연결을 확인하세요.
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-700">
+          API 서버에서 데이터를 불러올 수 없습니다. API 재배포가 필요할 수 있습니다.
         </div>
       )}
 

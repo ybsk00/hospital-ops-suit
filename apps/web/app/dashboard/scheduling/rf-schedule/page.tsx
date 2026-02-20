@@ -654,8 +654,8 @@ export default function RfSchedulePage() {
 
       {/* ═══ DAILY VIEW - Error ═══ */}
       {viewMode === 'daily' && !data && !loading && (
-        <div className="bg-white rounded-lg border p-8 text-center text-slate-400">
-          데이터를 불러올 수 없습니다. API 서버 연결을 확인하세요.
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-700">
+          API 서버에서 데이터를 불러올 수 없습니다. API 재배포가 필요할 수 있습니다.
         </div>
       )}
 
@@ -771,98 +771,93 @@ export default function RfSchedulePage() {
       )}
 
       {/* ═══ WEEKLY VIEW ═══ */}
-      {viewMode === 'weekly' && !weeklyData && !loading && (
-        <div className="bg-white rounded-lg border p-8 text-center text-slate-400">
-          데이터를 불러올 수 없습니다. API 서버 연결을 확인하세요.
-        </div>
-      )}
-      {viewMode === 'weekly' && weeklyData && (
-        <>
-          {/* Week Nav */}
-          <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-2.5">
-            <button onClick={() => setWeekDate(shiftWeek(weekDate, -1))} className="p-1.5 rounded-lg hover:bg-slate-100 transition">
-              <ChevronLeft size={20} />
-            </button>
-            <div className="flex items-center gap-3">
-              <span className="font-semibold text-slate-800">
-                {getWeekLabel(weeklyData.week.start, weeklyData.week.end)}
-              </span>
-              <button
-                onClick={() => setWeekDate(new Date().toISOString().slice(0, 10))}
-                className="text-xs px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100"
-              >이번주</button>
-            </div>
-            <button onClick={() => setWeekDate(shiftWeek(weekDate, 1))} className="p-1.5 rounded-lg hover:bg-slate-100 transition">
-              <ChevronRight size={20} />
-            </button>
-          </div>
+      {viewMode === 'weekly' && (() => {
+        const wkDates = weeklyData ? getWeekDatesFromStart(weeklyData.week.start) : getWeekDatesFromStart(weekDate);
+        const wkLabel = weeklyData ? getWeekLabel(weeklyData.week.start, weeklyData.week.end) : `${weekDate.slice(0, 4)}년`;
+        const wkRooms = weeklyData?.rooms || Array.from({ length: 15 }, (_, i) => ({ id: `r${i}`, name: String(i + 1), displayOrder: i }));
 
-          {/* Weekly Grid: rooms(rows) × days(cols) */}
-          <div className="bg-white rounded-lg border overflow-x-auto">
-            <div style={{ minWidth: '700px' }}>
-              {/* Header: Day columns */}
-              <div className="grid border-b-2 border-slate-300" style={{ gridTemplateColumns: '60px repeat(6, 1fr)' }}>
-                <div className="px-2 py-2 text-xs font-semibold text-slate-500 border-r border-slate-200 flex items-center justify-center">기계</div>
-                {getWeekDatesFromStart(weeklyData.week.start).map((d, i) => {
-                  const dayData = weeklyData.days?.[d];
-                  return (
-                    <div
-                      key={d}
-                      onClick={() => navigateToDay(d)}
-                      className="px-1 py-2 text-center border-r border-slate-200 last:border-r-0 cursor-pointer hover:bg-blue-50 transition"
-                    >
-                      <div className="text-xs font-bold text-slate-700">{DAY_LABELS[i]} ({d.slice(8)}일)</div>
-                      {dayData && <div className="text-[10px] text-slate-400 mt-0.5">총 {dayData.total}건</div>}
-                    </div>
-                  );
-                })}
+        return (
+          <>
+            {/* Week Nav */}
+            <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-2.5">
+              <button onClick={() => setWeekDate(shiftWeek(weekDate, -1))} className="p-1.5 rounded-lg hover:bg-slate-100 transition">
+                <ChevronLeft size={20} />
+              </button>
+              <div className="flex items-center gap-3">
+                <span className="font-semibold text-slate-800">{wkLabel}</span>
+                <button
+                  onClick={() => setWeekDate(new Date().toISOString().slice(0, 10))}
+                  className="text-xs px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100"
+                >이번주</button>
               </div>
+              <button onClick={() => setWeekDate(shiftWeek(weekDate, 1))} className="p-1.5 rounded-lg hover:bg-slate-100 transition">
+                <ChevronRight size={20} />
+              </button>
+            </div>
 
-              {/* Room Rows */}
-              {weeklyData.rooms?.map((room) => (
-                <div
-                  key={room.id}
-                  className="grid border-b border-slate-100"
-                  style={{ gridTemplateColumns: '60px repeat(6, 1fr)' }}
-                >
-                  <div className="px-1 py-1 text-xs font-bold text-slate-700 border-r border-slate-200 flex items-center justify-center bg-slate-50">
-                    {room.name}번
-                  </div>
-                  {getWeekDatesFromStart(weeklyData.week.start).map((d) => {
-                    const roomDay = weeklyData.days?.[d]?.byRoom?.[room.id];
-                    if (!roomDay || roomDay.count === 0) {
-                      return (
-                        <div
-                          key={d}
-                          onClick={() => navigateToDay(d)}
-                          className="px-1 py-1 border-r border-slate-100 last:border-r-0 cursor-pointer hover:bg-blue-50/40 min-h-[36px]"
-                        />
-                      );
-                    }
+            {!weeklyData && !loading && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-700">
+                API 서버에서 데이터를 불러올 수 없습니다. API 재배포가 필요할 수 있습니다.
+              </div>
+            )}
+
+            {/* Weekly Grid: rooms(rows) × days(cols) */}
+            <div className="bg-white rounded-lg border overflow-x-auto">
+              <div style={{ minWidth: '700px' }}>
+                <div className="grid border-b-2 border-slate-300" style={{ gridTemplateColumns: '60px repeat(6, 1fr)' }}>
+                  <div className="px-2 py-2 text-xs font-semibold text-slate-500 border-r border-slate-200 flex items-center justify-center">기계</div>
+                  {wkDates.map((d, i) => {
+                    const dayData = weeklyData?.days?.[d];
                     return (
                       <div
                         key={d}
                         onClick={() => navigateToDay(d)}
-                        className="px-1 py-1 border-r border-slate-100 last:border-r-0 cursor-pointer hover:bg-blue-50/40 min-h-[36px]"
+                        className="px-1 py-2 text-center border-r border-slate-200 last:border-r-0 cursor-pointer hover:bg-blue-50 transition"
                       >
-                        {roomDay.slots?.slice(0, 3).map((s: any, si: number) => (
-                          <div key={si} className="text-[10px] text-slate-500 leading-tight truncate">
-                            <span className={`font-bold ${s.doctorCode === 'C' ? 'text-blue-600' : 'text-green-600'}`}>{s.doctorCode}</span>
-                            {' '}{s.patientName}
-                          </div>
-                        ))}
-                        {(roomDay.slots?.length || 0) > 3 && (
-                          <div className="text-[10px] text-slate-400">+{roomDay.slots.length - 3}건</div>
-                        )}
+                        <div className="text-xs font-bold text-slate-700">{DAY_LABELS[i]} ({d.slice(8)}일)</div>
+                        {dayData && <div className="text-[10px] text-slate-400 mt-0.5">총 {dayData.total}건</div>}
                       </div>
                     );
                   })}
                 </div>
-              ))}
+
+                {wkRooms.map((room) => (
+                  <div
+                    key={room.id}
+                    className="grid border-b border-slate-100"
+                    style={{ gridTemplateColumns: '60px repeat(6, 1fr)' }}
+                  >
+                    <div className="px-1 py-1 text-xs font-bold text-slate-700 border-r border-slate-200 flex items-center justify-center bg-slate-50">
+                      {room.name}번
+                    </div>
+                    {wkDates.map((d) => {
+                      const roomDay = weeklyData?.days?.[d]?.byRoom?.[room.id];
+                      if (!roomDay || roomDay.count === 0) {
+                        return (
+                          <div key={d} onClick={() => navigateToDay(d)} className="px-1 py-1 border-r border-slate-100 last:border-r-0 cursor-pointer hover:bg-blue-50/40 min-h-[36px]" />
+                        );
+                      }
+                      return (
+                        <div key={d} onClick={() => navigateToDay(d)} className="px-1 py-1 border-r border-slate-100 last:border-r-0 cursor-pointer hover:bg-blue-50/40 min-h-[36px]">
+                          {roomDay.slots?.slice(0, 3).map((s: any, si: number) => (
+                            <div key={si} className="text-[10px] text-slate-500 leading-tight truncate">
+                              <span className={`font-bold ${s.doctorCode === 'C' ? 'text-blue-600' : 'text-green-600'}`}>{s.doctorCode}</span>
+                              {' '}{s.patientName}
+                            </div>
+                          ))}
+                          {(roomDay.slots?.length || 0) > 3 && (
+                            <div className="text-[10px] text-slate-400">+{roomDay.slots.length - 3}건</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        </>
-      )}
+          </>
+        );
+      })()}
 
       {/* ═══ MONTHLY VIEW - Simple Calendar ═══ */}
       {viewMode === 'monthly' && (
@@ -885,14 +880,14 @@ export default function RfSchedulePage() {
           </div>
 
           {!monthlyData && !loading && (
-            <div className="bg-white rounded-lg border p-8 text-center text-slate-400">
-              데이터를 불러올 수 없습니다. API 서버 연결을 확인하세요.
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-700">
+              API 서버에서 데이터를 불러올 수 없습니다. API 재배포가 필요할 수 있습니다.
             </div>
           )}
 
-          {monthlyData && (() => {
+          {(() => {
             const dayCounts: Record<string, number> = {};
-            if (monthlyData.grid) {
+            if (monthlyData?.grid) {
               for (const roomId of Object.keys(monthlyData.grid)) {
                 for (const dateStr of Object.keys(monthlyData.grid[roomId] || {})) {
                   for (const ts of Object.keys(monthlyData.grid[roomId][dateStr] || {})) {
