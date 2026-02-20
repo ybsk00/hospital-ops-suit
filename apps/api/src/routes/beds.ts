@@ -40,6 +40,7 @@ router.get(
                   where: { deletedAt: null, status: { not: 'DISCHARGED' } },
                   include: {
                     patient: { select: { id: true, name: true, emrPatientId: true, sex: true, dob: true } },
+                    attendingDoctor: { select: { name: true } },
                   },
                 },
               },

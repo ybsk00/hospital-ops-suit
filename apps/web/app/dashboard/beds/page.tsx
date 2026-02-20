@@ -31,6 +31,7 @@ interface Admission {
   admitDate: string;
   plannedDischargeDate: string | null;
   patient: Patient;
+  attendingDoctor?: { name: string };
 }
 
 interface Bed {
@@ -399,11 +400,21 @@ export default function BedsPage() {
                           </div>
                           <div className="text-xs mb-1">{statusLabels[bed.status]}</div>
                           {bed.currentAdmission && (
-                            <div className="flex items-center gap-1 mt-1">
-                              <User size={10} />
-                              <span className="text-xs font-medium truncate">
-                                {bed.currentAdmission.patient.name}
-                              </span>
+                            <div className="mt-1">
+                              <div className="flex items-center gap-1">
+                                <User size={10} />
+                                <span className="text-xs font-semibold truncate">
+                                  {bed.currentAdmission.patient.name}
+                                </span>
+                              </div>
+                              {bed.currentAdmission.status === 'DISCHARGE_PLANNED' && (
+                                <span className="text-[10px] text-orange-600 font-medium">퇴원예정</span>
+                              )}
+                              {bed.currentAdmission.plannedDischargeDate && (
+                                <div className="text-[10px] text-slate-400">
+                                  ~{bed.currentAdmission.plannedDischargeDate.slice(5, 10)}
+                                </div>
+                              )}
                             </div>
                           )}
                         </button>
@@ -458,22 +469,61 @@ export default function BedsPage() {
                   {statusLabels[selectedBed.status]}
                 </span>
               </div>
-              {selectedBed.currentAdmission && (
-                <>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">환자</span>
-                    <span className="font-medium">{selectedBed.currentAdmission.patient.name}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">EMR ID</span>
-                    <span>{selectedBed.currentAdmission.patient.emrPatientId}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">입원일</span>
-                    <span>{new Date(selectedBed.currentAdmission.admitDate).toLocaleDateString('ko-KR')}</span>
-                  </div>
-                </>
-              )}
+              {selectedBed.currentAdmission && (() => {
+                const adm = selectedBed.currentAdmission;
+                const admitMs = new Date(adm.admitDate).getTime();
+                const daysInHospital = Math.max(1, Math.ceil((Date.now() - admitMs) / 86400000));
+                const planned = adm.plannedDischargeDate;
+                const isOverdue = planned && new Date(planned) < new Date();
+                return (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">환자</span>
+                      <span className="font-semibold text-slate-800">{adm.patient.name}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">EMR ID</span>
+                      <span>{adm.patient.emrPatientId || '-'}</span>
+                    </div>
+                    {adm.attendingDoctor && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">주치의</span>
+                        <span className="font-medium">{adm.attendingDoctor.name}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">입원일</span>
+                      <span>{new Date(adm.admitDate).toLocaleDateString('ko-KR')}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">입원 기간</span>
+                      <span className="font-medium text-blue-600">{daysInHospital}일째</span>
+                    </div>
+                    {planned && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">퇴원 예정일</span>
+                        <span className={`font-medium ${isOverdue ? 'text-red-500' : 'text-blue-600'}`}>
+                          {new Date(planned).toLocaleDateString('ko-KR')}
+                          {isOverdue ? ' (예정초과)' : ' (예정)'}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">입원 상태</span>
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                        adm.status === 'ADMITTED' ? 'bg-blue-50 text-blue-600' :
+                        adm.status === 'DISCHARGE_PLANNED' ? 'bg-orange-50 text-orange-600' :
+                        adm.status === 'ON_LEAVE' ? 'bg-yellow-50 text-yellow-600' :
+                        'bg-slate-100 text-slate-500'
+                      }`}>
+                        {adm.status === 'ADMITTED' ? '재원중' :
+                         adm.status === 'DISCHARGE_PLANNED' ? '퇴원예정' :
+                         adm.status === 'ON_LEAVE' ? '외출/외박' : adm.status}
+                      </span>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             {/* Status Change */}

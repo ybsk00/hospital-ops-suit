@@ -462,4 +462,116 @@ router.get(
   }),
 );
 
+// =====================================================================
+// GET /api/room-booking/table — 엑셀표: 전체 병실/베드 flat 테이블
+// =====================================================================
+router.get(
+  '/table',
+  requireAuth,
+  asyncHandler(async (_req: Request, res: Response) => {
+    // 1) 전체 병실/베드 + 현재 입원정보 조회
+    const rooms = await prisma.room.findMany({
+      where: { isActive: true, deletedAt: null },
+      include: {
+        beds: {
+          where: { isActive: true, deletedAt: null },
+          orderBy: { label: 'asc' },
+          include: {
+            currentAdmission: {
+              include: {
+                patient: { select: { id: true, name: true } },
+                attendingDoctor: { select: { name: true } },
+                procedurePlans: {
+                  where: { deletedAt: null },
+                  include: {
+                    procedureCatalog: { select: { name: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    // 2) 입원 환자 ID 수집
+    const patientIds: string[] = [];
+    for (const room of rooms) {
+      for (const bed of room.beds) {
+        const adm = (bed as any).currentAdmission;
+        if (adm?.patient?.id) patientIds.push(adm.patient.id);
+      }
+    }
+
+    // 3) 치료 존재 여부 배치 쿼리
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const [manualPatients, rfPatients] = patientIds.length > 0
+      ? await Promise.all([
+          prisma.manualTherapySlot.findMany({
+            where: { patientId: { in: patientIds }, date: { gte: today }, status: { not: 'CANCELLED' }, deletedAt: null },
+            distinct: ['patientId'],
+            select: { patientId: true },
+          }),
+          prisma.rfScheduleSlot.findMany({
+            where: { patientId: { in: patientIds }, date: { gte: today }, status: { not: 'CANCELLED' }, deletedAt: null },
+            distinct: ['patientId'],
+            select: { patientId: true },
+          }),
+        ])
+      : [[], []];
+
+    const hasManual = new Set(manualPatients.map((m) => m.patientId));
+    const hasRf = new Set(rfPatients.map((r) => r.patientId));
+
+    // 4) flat 테이블 구성
+    const rows: any[] = [];
+    const now = new Date();
+
+    for (const room of rooms) {
+      for (const bed of room.beds) {
+        const adm = (bed as any).currentAdmission;
+        const patient = adm?.patient;
+        const pId = patient?.id;
+
+        // 치료 내용 집계
+        const treatments: string[] = [];
+        if (adm?.procedurePlans) {
+          const planNames = adm.procedurePlans
+            .map((pp: any) => pp.procedureCatalog?.name)
+            .filter(Boolean);
+          for (const n of planNames) {
+            if (!treatments.includes(n)) treatments.push(n);
+          }
+        }
+        if (pId && hasManual.has(pId) && !treatments.includes('도수치료')) {
+          treatments.push('도수치료');
+        }
+        if (pId && hasRf.has(pId) && !treatments.includes('온열치료')) {
+          treatments.push('온열치료');
+        }
+
+        rows.push({
+          roomName: room.name,
+          bedLabel: bed.label,
+          bedId: bed.id,
+          bedStatus: bed.status,
+          patientName: patient?.name || null,
+          patientId: pId || null,
+          admitDate: adm?.admitDate ? toDateStr(new Date(adm.admitDate)) : null,
+          plannedDischargeDate: adm?.plannedDischargeDate ? toDateStr(new Date(adm.plannedDischargeDate)) : null,
+          isFutureDischarge: adm?.plannedDischargeDate ? new Date(adm.plannedDischargeDate) > now : false,
+          doctorName: adm?.attendingDoctor?.name || null,
+          treatments,
+          admissionStatus: adm?.status || null,
+        });
+      }
+    }
+
+    res.json({ success: true, data: { rows } });
+  }),
+);
+
 export default router;
