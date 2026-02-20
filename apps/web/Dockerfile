@@ -10,7 +10,8 @@ COPY . .
 # 로컬 env 파일 제거 (dockerignore 우회 방지)
 RUN rm -f .env .env.local .env.development .env.production .env.development.local .env.production.local
 
-ENV NEXT_PUBLIC_API_URL=https://hospital-ops-api-783253438610.asia-northeast3.run.app
+ARG NEXT_PUBLIC_API_URL=https://hospital-ops-api-783253438610.asia-northeast3.run.app
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
 RUN echo "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" && npm run build
 

@@ -1,0 +1,13 @@
+.git
+.gitignore
+node_modules
+.next
+dist
+*.log
+.env
+.env.*
+.env.local
+docs/
+storage/
+*.md
+!deploy-env-api.yaml

@@ -1,18 +1,32 @@
 steps:
   # ============================================================
-  # Build API
+  # Build API (병렬)
   # ============================================================
   - name: 'gcr.io/cloud-builders/docker'
     id: 'build-api'
-    args: ['build', '-t', 'gcr.io/$PROJECT_ID/hospital-ops-api:$COMMIT_SHA', '-f', 'apps/api/Dockerfile', 'apps/api']
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/hospital-ops-api:$COMMIT_SHA'
+      - '-f'
+      - 'apps/api/Dockerfile'
+      - 'apps/api'
 
   # ============================================================
-  # Build Web
+  # Build Web (병렬 - API URL을 빌드 인자로 전달)
   # ============================================================
   - name: 'gcr.io/cloud-builders/docker'
     id: 'build-web'
-    args: ['build', '-t', 'gcr.io/$PROJECT_ID/hospital-ops-web:$COMMIT_SHA', '-f', 'apps/web/Dockerfile', 'apps/web']
-    waitFor: ['-']  # Run in parallel with API build
+    args:
+      - 'build'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_API_URL=https://hospital-ops-api-783253438610.asia-northeast3.run.app'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/hospital-ops-web:$COMMIT_SHA'
+      - '-f'
+      - 'apps/web/Dockerfile'
+      - 'apps/web'
+    waitFor: ['-']
 
   # ============================================================
   # Push API
@@ -35,30 +49,20 @@ steps:
   # ============================================================
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'deploy-api'
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - 'run'
-      - 'deploy'
-      - 'hospital-ops-api'
-      - '--image'
-      - 'gcr.io/$PROJECT_ID/hospital-ops-api:$COMMIT_SHA'
-      - '--region'
-      - 'asia-northeast3'
-      - '--allow-unauthenticated'
-      - '--min-instances'
-      - '0'
-      - '--max-instances'
-      - '2'
-      - '--memory'
-      - '1Gi'
-      - '--cpu'
-      - '1'
-      - '--timeout'
-      - '300'
-      - '--set-env-vars'
-      - 'TZ=Asia/Seoul,GEMINI_CHAT_MODEL=gemini-2.5-flash,JWT_ACCESS_EXPIRES=4h,JWT_REFRESH_EXPIRES=30d,CORS_ORIGIN=https://hospital-ops-web-788517765486.asia-northeast3.run.app'
-      - '--set-secrets'
-      - 'DATABASE_URL=hospital-ops-database-url:latest,DIRECT_URL=hospital-ops-database-url:latest,JWT_SECRET=hospital-ops-jwt-secret:latest,JWT_REFRESH_SECRET=hospital-ops-jwt-refresh-secret:latest,GEMINI_API_KEY=hospital-ops-gemini-api-key:latest'
+      - '-c'
+      - |
+        gcloud run deploy hospital-ops-api \
+          --image gcr.io/$PROJECT_ID/hospital-ops-api:$COMMIT_SHA \
+          --region asia-northeast3 \
+          --allow-unauthenticated \
+          --min-instances 0 \
+          --max-instances 2 \
+          --memory 1Gi \
+          --cpu 1 \
+          --timeout 300 \
+          --env-vars-file /workspace/deploy-env-api.yaml
     waitFor: ['push-api']
 
   # ============================================================
@@ -87,8 +91,40 @@ steps:
       - '--timeout'
       - '300'
       - '--set-env-vars'
-      - 'NEXT_PUBLIC_API_URL=https://hospital-ops-api-788517765486.asia-northeast3.run.app'
+      - 'NEXT_PUBLIC_API_URL=https://hospital-ops-api-783253438610.asia-northeast3.run.app'
     waitFor: ['push-web']
+
+  # ============================================================
+  # 트래픽 전환 - API 최신 리비전으로 100%
+  # ============================================================
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'traffic-api'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'services'
+      - 'update-traffic'
+      - 'hospital-ops-api'
+      - '--region'
+      - 'asia-northeast3'
+      - '--to-latest'
+    waitFor: ['deploy-api']
+
+  # ============================================================
+  # 트래픽 전환 - Web 최신 리비전으로 100%
+  # ============================================================
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'traffic-web'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'services'
+      - 'update-traffic'
+      - 'hospital-ops-web'
+      - '--region'
+      - 'asia-northeast3'
+      - '--to-latest'
+    waitFor: ['deploy-web']
 
 images:
   - 'gcr.io/$PROJECT_ID/hospital-ops-api:$COMMIT_SHA'
