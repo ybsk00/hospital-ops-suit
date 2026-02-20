@@ -13,6 +13,10 @@ __pycache__/
 .venv/
 *.egg-info/
 
+# 배포 환경변수 (API 키 포함 - 절대 커밋 금지)
+deploy-env-api.yaml
+.mcp.json
+
 # Claude Code 개인 설정 (세션 간 기억)
 CLAUDE.local.md
 ../.claude/

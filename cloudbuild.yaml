@@ -46,6 +46,8 @@ steps:
 
   # ============================================================
   # Deploy API to Cloud Run
+  #   민감 정보: Secret Manager 참조 (--set-secrets)
+  #   비민감 설정: deploy-env-api.yaml (--env-vars-file)
   # ============================================================
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'deploy-api'
@@ -62,7 +64,8 @@ steps:
           --memory 1Gi \
           --cpu 1 \
           --timeout 300 \
-          --env-vars-file /workspace/deploy-env-api.yaml
+          --env-vars-file /workspace/deploy-env-api.yaml \
+          --set-secrets="DATABASE_URL=hospital-ops-database-url:latest,DIRECT_URL=hospital-ops-database-url:latest,JWT_SECRET=hospital-ops-jwt-secret:latest,JWT_REFRESH_SECRET=hospital-ops-jwt-refresh-secret:latest,GEMINI_API_KEY=hospital-ops-gemini-api-key:latest,YOUTUBE_API_KEY=hospital-ops-youtube-api-key:latest"
     waitFor: ['push-api']
 
   # ============================================================
