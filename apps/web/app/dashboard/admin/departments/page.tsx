@@ -12,6 +12,11 @@ import {
   Shield,
   Check,
   RefreshCw,
+  Plus,
+  Pencil,
+  ToggleLeft,
+  ToggleRight,
+  X,
 } from 'lucide-react';
 
 /* ─── Interfaces ─── */
@@ -54,6 +59,7 @@ const RESOURCES = [
   { value: 'DEPARTMENTS', label: '부서' },
   { value: 'CHATBOT', label: '챗봇' },
   { value: 'DASHBOARD', label: '대시보드' },
+  { value: 'SCHEDULING', label: '스케줄링' },
 ];
 
 const ACTIONS = [
@@ -75,6 +81,8 @@ export default function DepartmentsPage() {
 
   const [departments, setDepartments] = useState<DeptDetail[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editDept, setEditDept] = useState<DeptDetail | null>(null);
 
   const fetchDepartments = useCallback(async () => {
     if (!accessToken) return;
@@ -94,6 +102,21 @@ export default function DepartmentsPage() {
   useEffect(() => {
     fetchDepartments();
   }, [fetchDepartments]);
+
+  async function handleToggleActive(dept: DeptDetail, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!accessToken) return;
+    try {
+      await api(`/api/admin/departments/${dept.id}`, {
+        method: 'PATCH',
+        body: { isActive: !dept.isActive },
+        token: accessToken,
+      });
+      await fetchDepartments();
+    } catch (err: any) {
+      alert(err.message || '상태 변경에 실패했습니다.');
+    }
+  }
 
   // 부서 선택 시 → 권한 매트릭스 뷰
   if (selectedDeptId) {
@@ -119,7 +142,7 @@ export default function DepartmentsPage() {
         >
           <ArrowLeft size={20} className="text-slate-600" />
         </button>
-        <div>
+        <div className="flex-1">
           <h1 className="text-2xl font-bold text-slate-900">부서 관리</h1>
           <p className="text-slate-500 text-sm mt-1">
             부서를 선택하여 권한을 설정하세요.
@@ -128,13 +151,20 @@ export default function DepartmentsPage() {
       </div>
 
       {/* Toolbar */}
-      <div className="flex items-center justify-end mb-4">
+      <div className="flex items-center justify-end mb-4 gap-2">
         <button
           onClick={fetchDepartments}
           className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition text-sm"
         >
           <RefreshCw size={16} />
           새로고침
+        </button>
+        <button
+          onClick={() => setShowAddModal(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium"
+        >
+          <Plus size={16} />
+          부서 추가
         </button>
       </div>
 
@@ -148,63 +178,198 @@ export default function DepartmentsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {departments.map((dept) => (
-            <button
+            <div
               key={dept.id}
-              onClick={() =>
-                router.push(`/dashboard/admin/departments?id=${dept.id}`)
-              }
               className={`bg-white rounded-xl border p-5 text-left transition hover:shadow-md hover:border-blue-300 ${
                 dept.isActive ? 'border-slate-200' : 'border-slate-200 opacity-60'
               }`}
             >
               <div className="flex items-start justify-between mb-3">
-                <div>
-                  <h3 className="text-base font-semibold text-slate-900">
+                <button
+                  onClick={() => router.push(`/dashboard/admin/departments?id=${dept.id}`)}
+                  className="text-left flex-1"
+                >
+                  <h3 className="text-base font-semibold text-slate-900 hover:text-blue-600 transition">
                     {dept.name}
                   </h3>
                   <span className="text-xs font-mono text-slate-400">
                     {dept.code}
                   </span>
+                </button>
+                <div className="flex items-center gap-1 ml-2">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setEditDept(dept); }}
+                    title="편집"
+                    className="p-1.5 rounded-lg hover:bg-slate-100 transition text-slate-400 hover:text-blue-600"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  <button
+                    onClick={(e) => handleToggleActive(dept, e)}
+                    title={dept.isActive ? '비활성화' : '활성화'}
+                    className={`p-1.5 rounded-lg transition ${
+                      dept.isActive ? 'text-green-600 hover:bg-green-50' : 'text-slate-400 hover:bg-slate-100'
+                    }`}
+                  >
+                    {dept.isActive ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
+                  </button>
                 </div>
-                {dept.isActive ? (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">
-                    활성
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-500">
-                    비활성
-                  </span>
-                )}
               </div>
 
-              <div className="flex gap-4 mt-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
-                    <Users size={14} className="text-blue-600" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-semibold text-slate-900">
-                      {dept.memberCount}
+              <button
+                onClick={() => router.push(`/dashboard/admin/departments?id=${dept.id}`)}
+                className="w-full"
+              >
+                <div className="flex gap-4 mt-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
+                      <Users size={14} className="text-blue-600" />
                     </div>
-                    <div className="text-xs text-slate-500">구성원</div>
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">
+                        {dept.memberCount}
+                      </div>
+                      <div className="text-xs text-slate-500">구성원</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center">
+                      <Shield size={14} className="text-amber-600" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">
+                        {dept.permissionCount}
+                      </div>
+                      <div className="text-xs text-slate-500">권한</div>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center">
-                    <Shield size={14} className="text-amber-600" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-semibold text-slate-900">
-                      {dept.permissionCount}
-                    </div>
-                    <div className="text-xs text-slate-500">권한</div>
-                  </div>
-                </div>
-              </div>
-            </button>
+              </button>
+            </div>
           ))}
         </div>
       )}
+
+      {/* Add Department Modal */}
+      {showAddModal && (
+        <DeptFormModal
+          accessToken={accessToken}
+          onClose={() => setShowAddModal(false)}
+          onSuccess={() => { setShowAddModal(false); fetchDepartments(); }}
+        />
+      )}
+
+      {/* Edit Department Modal */}
+      {editDept && (
+        <DeptFormModal
+          accessToken={accessToken}
+          dept={editDept}
+          onClose={() => setEditDept(null)}
+          onSuccess={() => { setEditDept(null); fetchDepartments(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ─── Department Form Modal (Add / Edit) ─── */
+
+function DeptFormModal({
+  accessToken,
+  dept,
+  onClose,
+  onSuccess,
+}: {
+  accessToken: string | null;
+  dept?: DeptDetail;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const isEdit = !!dept;
+  const [form, setForm] = useState({ name: dept?.name || '', code: dept?.code || '' });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!accessToken) return;
+    if (!form.name || !form.code) { setError('부서 이름과 코드는 필수입니다.'); return; }
+
+    setSubmitting(true);
+    setError('');
+    try {
+      if (isEdit) {
+        await api(`/api/admin/departments/${dept!.id}`, {
+          method: 'PATCH',
+          body: { name: form.name, code: form.code },
+          token: accessToken,
+        });
+      } else {
+        await api('/api/admin/departments', {
+          method: 'POST',
+          body: { name: form.name, code: form.code },
+          token: accessToken,
+        });
+      }
+      onSuccess();
+    } catch (err: any) {
+      setError(err.message || (isEdit ? '부서 수정에 실패했습니다.' : '부서 생성에 실패했습니다.'));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-40" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-lg font-semibold text-slate-900">{isEdit ? '부서 편집' : '부서 추가'}</h3>
+          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg transition">
+            <X size={20} className="text-slate-400" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              부서 이름 <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={form.name}
+              onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="예: 간호부"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              부서 코드 <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={form.code}
+              onChange={(e) => setForm((prev) => ({ ...prev, code: e.target.value }))}
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="예: NURSING"
+            />
+          </div>
+
+          {error && (
+            <div className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</div>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-sm transition">
+              취소
+            </button>
+            <button type="submit" disabled={submitting} className="flex-1 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg text-sm font-medium transition disabled:opacity-50">
+              {submitting ? '처리 중...' : isEdit ? '수정' : '추가'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

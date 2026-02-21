@@ -124,6 +124,8 @@ model User {
   staffDayNotes         StaffDayNote[]      @relation("StaffNoteCreator") // Phase 8
   handoverEntries       HandoverEntry[]     @relation("HandoverCreator") // Phase 8E
   rfEvaluations         RfTreatmentEvaluation[] @relation("RfEvalCreator") // Phase 8E
+  createdDayOffs        DoctorDayOff[]     @relation("DayOffCreator")
+  createdAdmissionEvents AdmissionEvent[]  @relation("EventCreator")
 }
 
 model UserDepartment {
@@ -231,6 +233,8 @@ model Bed {
 
   currentAdmission Admission?      @relation("CurrentBed")
   bedAssignments   BedAssignment[]
+  eventsFrom       AdmissionEvent[] @relation("EventFromBed")
+  eventsTo         AdmissionEvent[] @relation("EventToBed")
 
   @@unique([roomId, label])
 }
@@ -261,6 +265,10 @@ model Admission {
   currentBed           Bed?            @relation("CurrentBed", fields: [currentBedId], references: [id])
   status               AdmissionStatus @default(ADMITTED)
   syncConflictFlag     Boolean         @default(false)
+  admitTime            String?
+  dischargeTime        String?
+  diagnosis            String?
+  isVip                Boolean         @default(false)
   notes                String?
   version              Int             @default(0)
   createdAt            DateTime        @default(now())
@@ -269,6 +277,7 @@ model Admission {
 
   bedAssignments BedAssignment[]
   procedurePlans ProcedurePlan[]
+  events         AdmissionEvent[]
 }
 
 model BedAssignment {
@@ -409,11 +418,13 @@ model Doctor {
   updatedAt     DateTime      @updatedAt
   deletedAt     DateTime?
 
-  appointments    Appointment[]
-  clinicRooms     ClinicRoom[]
-  rfScheduleSlots RfScheduleSlot[]           // Phase 정규화
-  handoverEntries HandoverEntry[]            // Phase 정규화
-  rfEvaluations   RfTreatmentEvaluation[]    // Phase 정규화
+  appointments      Appointment[]
+  clinicRooms       ClinicRoom[]
+  rfScheduleSlots   RfScheduleSlot[]           // Phase 정규화
+  handoverEntries   HandoverEntry[]            // Phase 정규화
+  rfEvaluations     RfTreatmentEvaluation[]    // Phase 정규화
+  dayOffs           DoctorDayOff[]
+  admissionEvents   AdmissionEvent[]
 }
 
 model ClinicRoom {
@@ -1212,4 +1223,61 @@ model RfTreatmentEvaluation {
   @@index([patientId, evaluatedAt])
   @@index([evaluatedAt])
   @@index([doctorCode, evaluatedAt])
+}
+
+// ============================================================
+// 의사 휴무일 관리
+// ============================================================
+
+model DoctorDayOff {
+  id          String   @id @default(uuid())
+  doctorId    String
+  doctor      Doctor   @relation(fields: [doctorId], references: [id])
+  date        DateTime @db.Date
+  reason      String?
+  createdById String
+  createdBy   User     @relation("DayOffCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([doctorId, date])
+  @@index([doctorId, date])
+}
+
+// ============================================================
+// 입퇴원/전실 이벤트 로그
+// ============================================================
+
+enum AdmissionEventType {
+  ADMITTED
+  DISCHARGED
+  ADMIN_DISCHARGE
+  TRANSFERRED
+  LEAVE_START
+  LEAVE_END
+}
+
+model AdmissionEvent {
+  id            String             @id @default(uuid())
+  admissionId   String
+  admission     Admission          @relation(fields: [admissionId], references: [id])
+  eventType     AdmissionEventType
+  eventDate     DateTime           @db.Date
+  eventTime     String?
+  fromBedId     String?
+  fromBed       Bed?               @relation("EventFromBed", fields: [fromBedId], references: [id])
+  toBedId       String?
+  toBed         Bed?               @relation("EventToBed", fields: [toBedId], references: [id])
+  doctorId      String?
+  doctor        Doctor?            @relation(fields: [doctorId], references: [id])
+  notes         String?
+  financialNote String?
+  isNewPatient  Boolean            @default(false)
+  createdById   String
+  createdBy     User               @relation("EventCreator", fields: [createdById], references: [id])
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@index([admissionId])
+  @@index([eventDate])
 }

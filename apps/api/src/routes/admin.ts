@@ -93,6 +93,7 @@ const updatePermissionsSchema = z.object({
         'DEPARTMENTS',
         'CHATBOT',
         'DASHBOARD',
+        'SCHEDULING',
       ]),
       action: z.enum(['READ', 'WRITE', 'DELETE', 'APPROVE', 'EXPORT', 'ADMIN']),
       scope: z.string().optional(),
@@ -386,6 +387,85 @@ router.get(
     }));
 
     res.json({ success: true, data: { items } });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/departments – 부서 생성
+// ---------------------------------------------------------------------------
+
+const createDepartmentSchema = z.object({
+  name: z.string().min(1).max(100),
+  code: z.string().min(1).max(50),
+});
+
+router.post(
+  '/departments',
+  requireAuth,
+  requirePermission('DEPARTMENTS', 'ADMIN'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const body = createDepartmentSchema.parse(req.body);
+
+    const existing = await prisma.department.findFirst({
+      where: { code: body.code, deletedAt: null },
+    });
+    if (existing) {
+      throw new AppError(409, 'DUPLICATE', '이미 사용 중인 부서 코드입니다.');
+    }
+
+    const department = await prisma.department.create({
+      data: {
+        name: body.name,
+        code: body.code,
+      },
+    });
+
+    res.status(201).json({ success: true, data: department });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// PATCH /api/admin/departments/:id – 부서 수정
+// ---------------------------------------------------------------------------
+
+const updateDepartmentSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  code: z.string().min(1).max(50).optional(),
+  isActive: z.boolean().optional(),
+});
+
+router.patch(
+  '/departments/:id',
+  requireAuth,
+  requirePermission('DEPARTMENTS', 'ADMIN'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const body = updateDepartmentSchema.parse(req.body);
+
+    const existing = await prisma.department.findUnique({ where: { id } });
+    if (!existing || existing.deletedAt) {
+      throw new AppError(404, 'NOT_FOUND', '해당 부서를 찾을 수 없습니다.');
+    }
+
+    if (body.code && body.code !== existing.code) {
+      const dup = await prisma.department.findFirst({
+        where: { code: body.code, deletedAt: null, id: { not: id } },
+      });
+      if (dup) {
+        throw new AppError(409, 'DUPLICATE', '이미 사용 중인 부서 코드입니다.');
+      }
+    }
+
+    const updated = await prisma.department.update({
+      where: { id },
+      data: {
+        ...(body.name !== undefined && { name: body.name }),
+        ...(body.code !== undefined && { code: body.code }),
+        ...(body.isActive !== undefined && { isActive: body.isActive }),
+      },
+    });
+
+    res.json({ success: true, data: updated });
   }),
 );
 

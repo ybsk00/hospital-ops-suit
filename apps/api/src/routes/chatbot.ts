@@ -164,6 +164,18 @@ ${now} (오늘: ${today})
 - 필수: patientName. 선택: reason
 - "입원 취소/퇴원 처리/퇴원해줘" 키워드 → cancelAdmission
 
+[의사 근무 스케줄 — getDoctorWorkSchedule]
+- "이재일 원장 이번달 근무일?" → getDoctorWorkSchedule(doctorName="이재일") 호출
+- "다음달 의사 근무표" → getDoctorWorkSchedule(month=다음달) 호출
+- 정규 휴무일, 특별 휴무일, 근무시간, 월간 통계를 조회
+- 선택: doctorName(미입력 시 전체), year, month
+
+[입퇴원 이벤트 — getAdmissionEvents]
+- "오늘 입퇴원 현황" → getAdmissionEvents() 호출
+- "2월 전실 이력" → getAdmissionEvents(month=2) 호출
+- 입원/퇴원/전실/외출 이벤트 이력을 날짜별로 조회
+- 선택: date(기본 오늘), month(월 전체 조회), year
+
 [회진 준비 — getRoundPrep]
 - "이찬용 원장 회진 준비 데이터 보여줘" → getRoundPrep 호출
 - "오늘 회진 준비" → getRoundPrep 호출

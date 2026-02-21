@@ -5,7 +5,7 @@ import { requireAuth } from '../middleware/auth';
 import { requirePermission } from '../middleware/rbac';
 import { asyncHandler, AppError } from '../middleware/errorHandler';
 import { auditLog } from '../middleware/audit';
-import { AdmissionStatus } from '@prisma/client';
+import { AdmissionStatus, AdmissionEventType } from '@prisma/client';
 
 const router = Router();
 
@@ -314,6 +314,73 @@ router.get(
   }),
 );
 
+// ─── GET /api/admissions/events ── 입퇴원/전실 이벤트 조회 ──────────
+// NOTE: /:id 보다 먼저 선언해야 라우트 충돌 방지
+router.get(
+  '/events',
+  requireAuth,
+  requirePermission('ADMISSIONS', 'READ'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { date, month, year: yearRaw } = req.query;
+
+    const year = parseInt(yearRaw as string) || new Date().getFullYear();
+
+    let startDate: Date;
+    let endDate: Date;
+
+    if (date) {
+      // 특정일 이벤트
+      startDate = new Date(date as string);
+      endDate = new Date(date as string);
+    } else {
+      // 월별 이벤트
+      const m = parseInt(month as string) || new Date().getMonth() + 1;
+      startDate = new Date(year, m - 1, 1);
+      endDate = new Date(year, m, 0); // 마지막 날
+    }
+
+    const events = await prisma.admissionEvent.findMany({
+      where: {
+        eventDate: { gte: startDate, lte: endDate },
+      },
+      include: {
+        admission: {
+          include: {
+            patient: { select: { id: true, name: true, emrPatientId: true } },
+            currentBed: {
+              include: { room: { select: { id: true, name: true } } },
+            },
+            attendingDoctor: { select: { id: true, name: true } },
+          },
+        },
+        fromBed: { include: { room: { select: { id: true, name: true } } } },
+        toBed: { include: { room: { select: { id: true, name: true } } } },
+        doctor: { select: { id: true, name: true, doctorCode: true } },
+        createdBy: { select: { id: true, name: true } },
+      },
+      orderBy: [{ eventDate: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    // 날짜별 그룹핑
+    const byDate: Record<string, typeof events> = {};
+    for (const ev of events) {
+      const d = new Date(ev.eventDate);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (!byDate[key]) byDate[key] = [];
+      byDate[key].push(ev);
+    }
+
+    res.json({
+      success: true,
+      data: {
+        events,
+        byDate,
+        total: events.length,
+      },
+    });
+  }),
+);
+
 // ─── GET /api/admissions ── 입원 목록 조회 ───────────────────────────
 router.get(
   '/',
@@ -435,6 +502,15 @@ router.get(
           },
           orderBy: { startDate: 'desc' },
         },
+        events: {
+          include: {
+            fromBed: { include: { room: { select: { id: true, name: true } } } },
+            toBed: { include: { room: { select: { id: true, name: true } } } },
+            doctor: { select: { id: true, name: true, doctorCode: true } },
+            createdBy: { select: { id: true, name: true } },
+          },
+          orderBy: [{ eventDate: 'asc' }, { createdAt: 'asc' }],
+        },
       },
     });
 
@@ -458,12 +534,35 @@ const createAdmissionSchema = z.object({
     phone: z.string().max(20).optional(),
   }).optional(),
   admitDate: z.string().datetime({ offset: true }).or(z.string().date()),
+  admitTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
   plannedDischargeDate: z.string().datetime({ offset: true }).or(z.string().date()).optional(),
   attendingDoctorId: z.string().uuid(),
   bedId: z.string().uuid().optional(),
+  diagnosis: z.string().max(500).optional(),
+  isVip: z.boolean().optional(),
   notes: z.string().max(2000).optional(),
   // 예약 상태로 생성 (RESERVED)
   isReservation: z.boolean().optional(),
+  // 통합 치료예약 (입원 시 도수/고주파 동시 생성)
+  treatments: z.object({
+    manualTherapy: z.object({
+      therapistId: z.string().uuid(),
+      schedule: z.array(z.object({
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        timeSlot: z.string(),
+      })),
+      treatmentCodes: z.array(z.string()).optional(),
+    }).optional(),
+    rfSchedule: z.object({
+      roomId: z.string().uuid(),
+      doctorId: z.string().uuid(),
+      schedule: z.array(z.object({
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        startTime: z.string().regex(/^\d{2}:\d{2}$/),
+        duration: z.number().min(10).max(120).default(30),
+      })),
+    }).optional(),
+  }).optional(),
 });
 
 router.post(
@@ -542,10 +641,13 @@ router.post(
         data: {
           patientId: patientId!,
           admitDate: new Date(body.admitDate),
+          admitTime: body.admitTime ?? null,
           plannedDischargeDate: body.plannedDischargeDate ? new Date(body.plannedDischargeDate) : null,
           attendingDoctorId: body.attendingDoctorId,
           currentBedId: body.bedId ?? null,
-          status: isReservation ? AdmissionStatus.DISCHARGE_PLANNED : AdmissionStatus.ADMITTED, // DISCHARGE_PLANNED를 예약용으로 사용
+          status: isReservation ? AdmissionStatus.DISCHARGE_PLANNED : AdmissionStatus.ADMITTED,
+          diagnosis: body.diagnosis ?? null,
+          isVip: body.isVip ?? false,
           notes: body.notes ?? null,
         },
         include: {
@@ -570,6 +672,66 @@ router.post(
             changedBy: req.user!.id,
           },
         });
+      }
+
+      // AdmissionEvent(ADMITTED) 자동 생성
+      const doctor = await tx.doctor.findFirst({
+        where: { userId: body.attendingDoctorId, isActive: true, deletedAt: null },
+      });
+
+      await tx.admissionEvent.create({
+        data: {
+          admissionId: newAdmission.id,
+          eventType: 'ADMITTED',
+          eventDate: new Date(body.admitDate),
+          eventTime: body.admitTime ?? null,
+          toBedId: body.bedId ?? null,
+          doctorId: doctor?.id ?? null,
+          notes: body.diagnosis ? `진단: ${body.diagnosis}` : null,
+          financialNote: body.isVip ? '상급병실' : null,
+          isNewPatient: !!body.newPatient,
+          createdById: req.user!.id,
+        },
+      });
+
+      // 통합 치료예약: 도수치료 슬롯 일괄 생성
+      if (body.treatments?.manualTherapy) {
+        const mt = body.treatments.manualTherapy;
+        for (const s of mt.schedule) {
+          await tx.manualTherapySlot.create({
+            data: {
+              therapistId: mt.therapistId,
+              patientId: patientId!,
+              date: new Date(s.date),
+              timeSlot: s.timeSlot,
+              duration: 30,
+              treatmentCodes: mt.treatmentCodes ?? [],
+              patientType: 'INPATIENT',
+              status: 'BOOKED',
+              source: 'INTERNAL',
+            },
+          });
+        }
+      }
+
+      // 통합 치료예약: 고주파 슬롯 일괄 생성
+      if (body.treatments?.rfSchedule) {
+        const rf = body.treatments.rfSchedule;
+        for (const s of rf.schedule) {
+          await tx.rfScheduleSlot.create({
+            data: {
+              roomId: rf.roomId,
+              patientId: patientId!,
+              doctorId: rf.doctorId,
+              date: new Date(s.date),
+              startTime: s.startTime,
+              duration: s.duration,
+              patientType: 'INPATIENT',
+              status: 'BOOKED',
+              source: 'INTERNAL',
+            },
+          });
+        }
       }
 
       return newAdmission;
@@ -672,6 +834,7 @@ router.patch(
 const transferSchema = z.object({
   newBedId: z.string().uuid(),
   version: z.number().int(),
+  notes: z.string().max(500).optional(),
 });
 
 router.post(
@@ -759,7 +922,25 @@ router.post(
         },
       });
 
-      // 4) 입원 레코드 갱신
+      // 4) AdmissionEvent(TRANSFERRED) 생성
+      const doctor = await tx.doctor.findFirst({
+        where: { userId: admission.attendingDoctorId ?? undefined, isActive: true, deletedAt: null },
+      });
+      await tx.admissionEvent.create({
+        data: {
+          admissionId: id,
+          eventType: 'TRANSFERRED',
+          eventDate: now,
+          eventTime: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+          fromBedId: admission.currentBedId ?? null,
+          toBedId: body.newBedId,
+          doctorId: doctor?.id ?? null,
+          notes: body.notes ?? null,
+          createdById: req.user!.id,
+        },
+      });
+
+      // 5) 입원 레코드 갱신
       return tx.admission.update({
         where: { id, version: body.version },
         data: {
@@ -786,6 +967,9 @@ router.post(
 // ─── POST /api/admissions/:id/discharge ── 퇴원 처리 ────────────────
 const dischargeSchema = z.object({
   dischargeDate: z.string().datetime({ offset: true }).or(z.string().date()),
+  dischargeTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  financialNote: z.string().max(500).optional(),
+  notes: z.string().max(500).optional(),
   version: z.number().int(),
 });
 
@@ -846,12 +1030,31 @@ router.post(
         });
       }
 
-      // 2) 입원 상태 → DISCHARGED
+      // 2) AdmissionEvent(DISCHARGED) 생성
+      const doctor = await tx.doctor.findFirst({
+        where: { userId: admission.attendingDoctorId ?? undefined, isActive: true, deletedAt: null },
+      });
+      await tx.admissionEvent.create({
+        data: {
+          admissionId: id,
+          eventType: 'DISCHARGED',
+          eventDate: new Date(body.dischargeDate),
+          eventTime: body.dischargeTime ?? null,
+          fromBedId: admission.currentBedId ?? null,
+          doctorId: doctor?.id ?? null,
+          notes: body.notes ?? null,
+          financialNote: body.financialNote ?? null,
+          createdById: req.user!.id,
+        },
+      });
+
+      // 3) 입원 상태 → DISCHARGED
       return tx.admission.update({
         where: { id, version: body.version },
         data: {
           status: AdmissionStatus.DISCHARGED,
           dischargeDate: new Date(body.dischargeDate),
+          dischargeTime: body.dischargeTime ?? null,
           currentBedId: null,
           version: { increment: 1 },
         },
@@ -870,6 +1073,93 @@ router.post(
     };
 
     res.json({ success: true, data: updated });
+  }),
+);
+
+// ─── GET /api/admissions/:id/events ── 특정 입원 이벤트 이력 ──────────
+router.get(
+  '/:id/events',
+  requireAuth,
+  requirePermission('ADMISSIONS', 'READ'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    const admission = await prisma.admission.findUnique({
+      where: { id },
+      select: { id: true, deletedAt: true },
+    });
+    if (!admission || admission.deletedAt) {
+      throw new AppError(404, 'NOT_FOUND', '입원 정보를 찾을 수 없습니다.');
+    }
+
+    const events = await prisma.admissionEvent.findMany({
+      where: { admissionId: id },
+      include: {
+        fromBed: { include: { room: { select: { id: true, name: true } } } },
+        toBed: { include: { room: { select: { id: true, name: true } } } },
+        doctor: { select: { id: true, name: true, doctorCode: true } },
+        createdBy: { select: { id: true, name: true } },
+      },
+      orderBy: [{ eventDate: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    res.json({ success: true, data: events });
+  }),
+);
+
+// ─── POST /api/admissions/:id/events ── 이벤트 수동 추가 ──────────
+const createEventSchema = z.object({
+  eventType: z.nativeEnum(AdmissionEventType),
+  eventDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  eventTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  fromBedId: z.string().uuid().optional(),
+  toBedId: z.string().uuid().optional(),
+  doctorId: z.string().uuid().optional(),
+  notes: z.string().max(500).optional(),
+  financialNote: z.string().max(500).optional(),
+  isNewPatient: z.boolean().optional(),
+});
+
+router.post(
+  '/:id/events',
+  requireAuth,
+  requirePermission('ADMISSIONS', 'WRITE'),
+  auditLog('ADMISSION_EVENT_CREATE', 'AdmissionEvent'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const body = createEventSchema.parse(req.body);
+
+    const admission = await prisma.admission.findUnique({
+      where: { id },
+      select: { id: true, deletedAt: true },
+    });
+    if (!admission || admission.deletedAt) {
+      throw new AppError(404, 'NOT_FOUND', '입원 정보를 찾을 수 없습니다.');
+    }
+
+    const event = await prisma.admissionEvent.create({
+      data: {
+        admissionId: id,
+        eventType: body.eventType,
+        eventDate: new Date(body.eventDate),
+        eventTime: body.eventTime ?? null,
+        fromBedId: body.fromBedId ?? null,
+        toBedId: body.toBedId ?? null,
+        doctorId: body.doctorId ?? null,
+        notes: body.notes ?? null,
+        financialNote: body.financialNote ?? null,
+        isNewPatient: body.isNewPatient ?? false,
+        createdById: req.user!.id,
+      },
+      include: {
+        fromBed: { include: { room: { select: { id: true, name: true } } } },
+        toBed: { include: { room: { select: { id: true, name: true } } } },
+        doctor: { select: { id: true, name: true, doctorCode: true } },
+        createdBy: { select: { id: true, name: true } },
+      },
+    });
+
+    res.status(201).json({ success: true, data: event });
   }),
 );
 

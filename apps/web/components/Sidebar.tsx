@@ -11,6 +11,7 @@ import {
   CalendarClock,
   Calendar,
   // Home,           // 가정방문 - 주석처리 (미구현)
+  BookOpen,
   Inbox,
   Upload,
   ScrollText,
@@ -56,6 +57,7 @@ const navGroups: NavGroup[] = [
       { href: '/dashboard/beds', label: '베드관리', icon: BedDouble },
       { href: '/dashboard/room-booking', label: '병실현황', icon: DoorOpen },
       { href: '/dashboard/admission-reservation', label: '입원예약', icon: UserPlus },
+      { href: '/dashboard/admission-log', label: '입퇴원일지', icon: BookOpen },
       { href: '/dashboard/handover', label: '인계장', icon: ClipboardList },
     ],
   },
@@ -97,6 +99,7 @@ const navGroups: NavGroup[] = [
     label: '기타관리',
     icon: Settings,
     items: [
+      { href: '/dashboard/admin/doctor-work', label: '닥터근무조정', icon: CalendarClock },
       { href: '/dashboard/imports', label: 'Import현황', icon: Upload },
       { href: '/dashboard/audit', label: '감사로그', icon: ScrollText },
       { href: '/dashboard/admin', label: '관리자설정', icon: Settings },

@@ -34,6 +34,7 @@ import rfScheduleRoutes from './routes/rfSchedule';
 import roomBookingRoutes from './routes/roomBooking';
 import handoverRoutes from './routes/handover';
 import rfEvaluationRoutes from './routes/rfEvaluation';
+import doctorScheduleRoutes from './routes/doctorSchedule';
 
 const app = express();
 
@@ -99,6 +100,7 @@ app.use('/api/rf-schedule', rfScheduleRoutes);
 app.use('/api/room-booking', roomBookingRoutes);
 app.use('/api/handover', handoverRoutes);
 app.use('/api/rf-evaluation', rfEvaluationRoutes);
+app.use('/api/doctor-schedule', doctorScheduleRoutes);
 
 // 헬스 체크
 app.get('/health', (_req, res) => {

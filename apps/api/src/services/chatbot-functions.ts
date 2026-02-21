@@ -1195,7 +1195,139 @@ export async function getRoundPrep(args: Record<string, any>) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  Gemini Function Declarations (45개)
+//  READ: 의사 근무스케줄 + 입퇴원 이벤트 (2개)
+// ═══════════════════════════════════════════════════════════
+
+// ─── 28. 의사 근무 스케줄 ───
+export async function getDoctorWorkSchedule(args: Record<string, any>) {
+  const now = new Date();
+  const year = args.year || now.getFullYear();
+  const month = args.month || now.getMonth() + 1;
+
+  const where: any = { isActive: true, deletedAt: null };
+  if (args.doctorName) {
+    where.name = { contains: args.doctorName };
+  }
+
+  const doctors = await prisma.doctor.findMany({
+    where,
+    select: { id: true, name: true, doctorCode: true, workDays: true, workStartTime: true, workEndTime: true },
+  });
+
+  const startDate = new Date(year, month - 1, 1);
+  const endDate = new Date(year, month, 0);
+
+  const dayOffs = await prisma.doctorDayOff.findMany({
+    where: {
+      date: { gte: startDate, lte: endDate },
+      doctor: { isActive: true },
+    },
+    select: { doctorId: true, date: true, reason: true },
+  });
+
+  const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+  const daysInMonth = endDate.getDate();
+
+  const result = doctors.map(doc => {
+    const regularOffDays = doc.workDays.length < 7
+      ? [0, 1, 2, 3, 4, 5, 6].filter(d => !doc.workDays.includes(d)).map(d => `${dayNames[d]}요일`)
+      : [];
+
+    const specialDayOffs = dayOffs
+      .filter(off => off.doctorId === doc.id)
+      .map(off => {
+        const d = new Date(off.date);
+        return `${d.getMonth() + 1}/${d.getDate()} ${off.reason || '휴무'}`;
+      });
+
+    // 이번 달 근무일/휴무일 카운트
+    let workDays = 0;
+    let offDays = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = new Date(year, month - 1, d);
+      const dow = date.getDay();
+      const hasDayOff = dayOffs.some(off => off.doctorId === doc.id && new Date(off.date).getDate() === d);
+      if (hasDayOff || !doc.workDays.includes(dow)) {
+        offDays++;
+      } else {
+        workDays++;
+      }
+    }
+
+    return {
+      name: doc.name,
+      code: doc.doctorCode,
+      regularOff: regularOffDays.join(', ') || '없음',
+      workTime: `${doc.workStartTime}~${doc.workEndTime}`,
+      specialDayOffs,
+      monthStats: { workDays, offDays },
+    };
+  });
+
+  return { year, month, doctors: result };
+}
+
+// ─── 29. 입퇴원/전실 이벤트 이력 ───
+export async function getAdmissionEvents(args: Record<string, any>) {
+  const now = new Date();
+  const dateStr = args.date || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+  let startDate: Date;
+  let endDate: Date;
+
+  if (args.month) {
+    const year = args.year || now.getFullYear();
+    startDate = new Date(year, args.month - 1, 1);
+    endDate = new Date(year, args.month, 0);
+  } else {
+    startDate = new Date(dateStr);
+    endDate = new Date(dateStr);
+  }
+
+  const events = await prisma.admissionEvent.findMany({
+    where: {
+      eventDate: { gte: startDate, lte: endDate },
+    },
+    include: {
+      admission: {
+        include: {
+          patient: { select: { name: true, emrPatientId: true } },
+        },
+      },
+      fromBed: { include: { room: { select: { name: true } } } },
+      toBed: { include: { room: { select: { name: true } } } },
+      doctor: { select: { name: true, doctorCode: true } },
+    },
+    orderBy: [{ eventDate: 'asc' }, { createdAt: 'asc' }],
+  });
+
+  const typeLabels: Record<string, string> = {
+    ADMITTED: '입원', DISCHARGED: '퇴원', ADMIN_DISCHARGE: '관리퇴원',
+    TRANSFERRED: '전실', LEAVE_START: '외출', LEAVE_END: '복귀',
+  };
+
+  return {
+    period: args.month ? `${args.year || now.getFullYear()}년 ${args.month}월` : dateStr,
+    total: events.length,
+    events: events.map(ev => ({
+      type: typeLabels[ev.eventType] || ev.eventType,
+      date: new Date(ev.eventDate).toISOString().slice(0, 10),
+      time: ev.eventTime || '-',
+      patient: ev.admission.patient.name,
+      chartNumber: ev.admission.patient.emrPatientId,
+      from: ev.fromBed ? `${ev.fromBed.room.name}-${ev.fromBed.label}` : null,
+      to: ev.toBed ? `${ev.toBed.room.name}-${ev.toBed.label}` : null,
+      doctor: ev.doctor?.name || '-',
+      doctorCode: ev.doctor?.doctorCode || '-',
+      notes: ev.notes,
+      financial: ev.financialNote,
+      isNew: ev.isNewPatient,
+    })),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Gemini Function Declarations (51개)
 // ═══════════════════════════════════════════════════════════
 
 const S = SchemaType;
@@ -1778,6 +1910,34 @@ const PHASE8E_WRITE_FUNCTIONS = [
   },
 ];
 
+// ── 의사 근무 + 입퇴원 이벤트 READ 함수 (2개) ──
+const DOCTOR_EVENT_READ_FUNCTIONS = [
+  {
+    name: 'getDoctorWorkSchedule',
+    description: '의사의 근무 스케줄(정규 휴무일, 특별 휴무일, 근무시간)을 조회합니다. "이재일 원장 이번달 근무일?", "다음주 근무하는 의사?" 등의 요청에 사용.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        doctorName: { type: S.STRING, description: '의사 이름 (미입력 시 전체 조회)' },
+        year: { type: S.NUMBER, description: '조회 연도 (기본: 올해)' },
+        month: { type: S.NUMBER, description: '조회 월 (기본: 이번달)' },
+      },
+    },
+  },
+  {
+    name: 'getAdmissionEvents',
+    description: '입퇴원/전실 이벤트 이력을 조회합니다. "오늘 입퇴원 현황", "2월 전실 이력", "이번달 퇴원 환자" 등의 요청에 사용.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        date: { type: S.STRING, description: '조회 날짜 (YYYY-MM-DD, 미입력 시 오늘)' },
+        month: { type: S.NUMBER, description: '조회 월 (입력 시 월 전체 조회)' },
+        year: { type: S.NUMBER, description: '조회 연도 (기본: 올해)' },
+      },
+    },
+  },
+];
+
 // ── Phase 8F: 입원예약 WRITE 함수 (3개) ──
 const ADMISSION_WRITE_FUNCTIONS = [
   {
@@ -1830,12 +1990,13 @@ const ADMISSION_WRITE_FUNCTIONS = [
   },
 ];
 
-// ── 전체 합치기 (48개) ──
+// ── 전체 합치기 (50개: READ 28 + WRITE 20) ──
 export const ALL_FUNCTION_DECLARATIONS = [
   ...READ_FUNCTIONS,
   ...NEW_READ_FUNCTIONS,
   ...SCHEDULING_READ_FUNCTIONS,
   ...PHASE8E_READ_FUNCTIONS,
+  ...DOCTOR_EVENT_READ_FUNCTIONS,
   ...WRITE_FUNCTIONS,
   ...SCHEDULING_WRITE_FUNCTIONS,
   ...PHASE8E_WRITE_FUNCTIONS,
@@ -1920,6 +2081,11 @@ export async function executeFunction(
       return getRfEvaluations(args);
     case 'getRoundPrep':
       return getRoundPrep(args);
+    // 의사 근무 + 입퇴원 이벤트
+    case 'getDoctorWorkSchedule':
+      return getDoctorWorkSchedule(args);
+    case 'getAdmissionEvents':
+      return getAdmissionEvents(args);
     default:
       return { error: `알 수 없는 함수: ${name}` };
   }

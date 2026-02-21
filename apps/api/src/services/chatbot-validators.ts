@@ -493,3 +493,112 @@ export async function matchDoctor(
     clinicRoomId: doctor.clinicRooms[0]?.id || null,
   };
 }
+
+// ═══════════════════════════════════════════════════════════
+//  7. 의사 근무 확인
+// ═══════════════════════════════════════════════════════════
+
+export interface DoctorWorkingResult {
+  isWorking: boolean;
+  reason?: string;
+  doctor?: { id: string; name: string; workDays: number[]; workStartTime: string; workEndTime: string };
+}
+
+/**
+ * 특정 날짜에 의사가 근무하는지 확인
+ * 1) Doctor.workDays 체크 (정규 근무일)
+ * 2) DoctorDayOff 체크 (특별 휴무일)
+ */
+export async function isDoctorWorking(
+  doctorId: string,
+  date: Date,
+): Promise<DoctorWorkingResult> {
+  const doctor = await prisma.doctor.findFirst({
+    where: { id: doctorId, isActive: true, deletedAt: null },
+  });
+  if (!doctor) return { isWorking: false, reason: '의사를 찾을 수 없습니다' };
+
+  const dayOfWeek = date.getDay(); // 0=Sun, 1=Mon ... 6=Sat
+
+  // 정규 근무일 체크
+  if (!doctor.workDays.includes(dayOfWeek)) {
+    const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+    return {
+      isWorking: false,
+      reason: `${doctor.name} 원장님은 ${dayNames[dayOfWeek]}요일 정규 휴무입니다`,
+      doctor: {
+        id: doctor.id, name: doctor.name,
+        workDays: doctor.workDays, workStartTime: doctor.workStartTime, workEndTime: doctor.workEndTime,
+      },
+    };
+  }
+
+  // 특별 휴무일 체크
+  const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dayOff = await prisma.doctorDayOff.findUnique({
+    where: { doctorId_date: { doctorId, date: dateOnly } },
+  });
+  if (dayOff) {
+    return {
+      isWorking: false,
+      reason: `${doctor.name} 원장님 휴무: ${dayOff.reason || '특별 휴무'}`,
+      doctor: {
+        id: doctor.id, name: doctor.name,
+        workDays: doctor.workDays, workStartTime: doctor.workStartTime, workEndTime: doctor.workEndTime,
+      },
+    };
+  }
+
+  return {
+    isWorking: true,
+    doctor: {
+      id: doctor.id, name: doctor.name,
+      workDays: doctor.workDays, workStartTime: doctor.workStartTime, workEndTime: doctor.workEndTime,
+    },
+  };
+}
+
+/**
+ * 시간이 근무시간 범위 내인지 확인
+ */
+export function isWithinWorkingHours(time: string, startTime: string, endTime: string): boolean {
+  const [h, m] = time.split(':').map(Number);
+  const [sh, sm] = startTime.split(':').map(Number);
+  const [eh, em] = endTime.split(':').map(Number);
+  const t = h * 60 + m;
+  return t >= sh * 60 + sm && t < eh * 60 + em;
+}
+
+/**
+ * 특정 의사의 다음 N개 근무일 계산
+ */
+export async function getNextWorkingDays(
+  doctorId: string,
+  fromDate: Date,
+  count: number = 3,
+): Promise<string[]> {
+  const doctor = await prisma.doctor.findFirst({
+    where: { id: doctorId, isActive: true, deletedAt: null },
+  });
+  if (!doctor) return [];
+
+  const result: string[] = [];
+  const d = new Date(fromDate);
+  d.setDate(d.getDate() + 1); // 다음날부터
+
+  for (let i = 0; i < 60 && result.length < count; i++) {
+    const dow = d.getDay();
+    if (doctor.workDays.includes(dow)) {
+      const dateOnly = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const dayOff = await prisma.doctorDayOff.findUnique({
+        where: { doctorId_date: { doctorId, date: dateOnly } },
+      });
+      if (!dayOff) {
+        result.push(d.toISOString().split('T')[0]);
+      }
+    }
+    d.setDate(d.getDate() + 1);
+  }
+
+  return result;
+}
