@@ -935,7 +935,6 @@ export async function confirmPendingAction(
           data: {
             therapistId: payload.therapistId,
             patientId: payload.patientId,
-            patientName: payload.patientName,
             date: new Date(payload.date),
             timeSlot: payload.time,
             treatmentCodes: payload.treatmentCodes || [],
@@ -1005,8 +1004,7 @@ export async function confirmPendingAction(
           data: {
             roomId: payload.roomId,
             patientId: payload.patientId,
-            patientName: payload.patientName,
-            doctorCode: payload.doctorCode,
+            doctorId: payload.doctorId,
             date: new Date(payload.date),
             startTime: payload.time,
             duration: payload.duration,
@@ -1036,7 +1034,7 @@ export async function confirmPendingAction(
         if (payload.newTime) rfUpdateData.startTime = payload.newTime;
         if (payload.newRoomId) rfUpdateData.roomId = payload.newRoomId;
         if (payload.newDuration) rfUpdateData.duration = payload.newDuration;
-        if (payload.newDoctorCode) rfUpdateData.doctorCode = payload.newDoctorCode;
+        if (payload.newDoctorId) rfUpdateData.doctorId = payload.newDoctorId;
 
         await prisma.rfScheduleSlot.update({
           where: { id: payload.slotId },
@@ -1205,7 +1203,6 @@ export async function confirmPendingAction(
         const evaluation = await prisma.rfTreatmentEvaluation.create({
           data: {
             patientId: payload.patientId,
-            chartNumber: payload.chartNumber || null,
             patientType: payload.patientType || 'INPATIENT',
             diagnosis: payload.diagnosis || null,
             probeType: payload.probeType || null,
@@ -1857,7 +1854,7 @@ async function handleCancelManualTherapySlot(
 
   const displayData = {
     actionLabel: '도수치료 취소',
-    patientName: slot.patientName || patientName,
+    patientName: patientName,
     therapistName: slot.therapist.name,
     date: slot.date.toISOString().slice(0, 10),
     time: slot.timeSlot,
@@ -1903,6 +1900,13 @@ async function handleCreateRfScheduleSlot(
 
   const duration = args.duration || 120;
   const doctorCode = args.doctorCode || 'C';
+
+  // resolve doctorCode to doctorId
+  const doctorRecord = await prisma.doctor.findFirst({ where: { doctorCode } });
+  if (!doctorRecord) {
+    return { type: 'error', message: `의사 코드 '${doctorCode}'를 찾을 수 없습니다.` };
+  }
+  const doctorId = doctorRecord.id;
 
   // 기계 배정
   let room: { id: string; name: string } | null = null;
@@ -1953,12 +1957,11 @@ async function handleCreateRfScheduleSlot(
       payload: {
         patientId,
         roomId: room.id,
-        doctorCode,
+        doctorId,
         date: args.date,
         time: args.time,
         duration,
         patientType: args.patientType || 'INPATIENT',
-        patientName,
       },
       displayData,
       status: 'PENDING',
@@ -2009,7 +2012,7 @@ async function handleModifyRfScheduleSlot(
 
   const existingSlot = await prisma.rfScheduleSlot.findFirst({
     where,
-    include: { room: { select: { id: true, name: true } } },
+    include: { room: { select: { id: true, name: true } }, doctor: { select: { doctorCode: true } } },
     orderBy: { date: 'asc' },
   });
 
@@ -2020,7 +2023,15 @@ async function handleModifyRfScheduleSlot(
   const targetDate = args.newDate || existingSlot.date.toISOString().slice(0, 10);
   const targetTime = args.newTime || existingSlot.startTime;
   const targetDuration = args.newDuration || existingSlot.duration;
-  const targetDoctorCode = args.newDoctorCode || existingSlot.doctorCode;
+  const targetDoctorCode = args.newDoctorCode || existingSlot.doctor?.doctorCode || '';
+
+  // resolve newDoctorCode to doctorId
+  let newDoctorId: string | null = null;
+  if (args.newDoctorCode) {
+    const newDoc = await prisma.doctor.findFirst({ where: { doctorCode: args.newDoctorCode } });
+    if (!newDoc) return { type: 'error', message: `의사 코드 '${args.newDoctorCode}'를 찾을 수 없습니다.` };
+    newDoctorId = newDoc.id;
+  }
 
   // 기계 결정
   let newRoomId = existingSlot.roomId;
@@ -2097,7 +2108,7 @@ async function handleModifyRfScheduleSlot(
         newTime: args.newTime || null,
         newRoomId: newRoomId !== existingSlot.roomId ? newRoomId : null,
         newDuration: args.newDuration || null,
-        newDoctorCode: args.newDoctorCode || null,
+        newDoctorId: newDoctorId || null,
         reason: args.reason || null,
       },
       displayData,
@@ -2175,7 +2186,7 @@ async function handleCancelRfScheduleSlot(
 
   const displayData = {
     actionLabel: '고주파 취소',
-    patientName: slot.patientName || patientName,
+    patientName: patientName,
     roomName: slot.room.name + '번',
     date: slot.date.toISOString().slice(0, 10),
     time: slot.startTime,

@@ -291,6 +291,7 @@ router.get(
         include: {
           patient: { select: { id: true, name: true } },
           room: { select: { name: true } },
+          doctor: { select: { doctorCode: true } },
         },
       }),
       // 도수치료 스케줄
@@ -358,7 +359,7 @@ router.get(
       // 고주파 (doctorCode 매칭)
       if (doctorCode) {
         for (const rf of rfSlots) {
-          if (rf.doctorCode === doctorCode) {
+          if (rf.doctor?.doctorCode === doctorCode) {
             schedules.push({
               time: rf.startTime,
               endTime: (() => {
@@ -367,7 +368,7 @@ router.get(
                 return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
               })(),
               type: 'RF',
-              patientName: rf.patientName || rf.patient?.name || '-',
+              patientName: rf.patient?.name || '-',
               detail: `고주파 ${rf.room.name} (${rf.duration}분)`,
               status: rf.status,
             });
@@ -384,7 +385,7 @@ router.get(
             time: mt.timeSlot,
             endTime: `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`,
             type: 'MANUAL',
-            patientName: mt.patientName || mt.patient?.name || '-',
+            patientName: mt.patient?.name || '-',
             detail: `도수치료 (${mt.therapist.name})`,
             status: mt.status,
           });

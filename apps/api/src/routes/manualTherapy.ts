@@ -13,6 +13,33 @@ function toDateStr(d: Date): string {
 }
 
 // ─── 타임슬롯 정의 (09:00~17:30, 30분 간격) ───
+// ─── 공통 Prisma include (임상정보 + 입원베드 포함) ───
+const PATIENT_INCLUDE = {
+  select: {
+    id: true, name: true, emrPatientId: true, status: true,
+    clinicalInfo: {
+      select: {
+        diagnosis: true, surgeryHistory: true, metastasis: true,
+        ctxHistory: true, chemoPort: true, rtHistory: true, notes: true,
+      },
+    },
+    admissions: {
+      where: { deletedAt: null, status: 'ADMITTED' as const },
+      select: {
+        id: true,
+        currentBed: { select: { label: true, room: { select: { name: true } } } },
+      },
+      take: 1,
+    },
+  },
+} as const;
+
+function serializeBedInfo(admissions: any[]): string | null {
+  const adm = admissions?.[0];
+  if (!adm?.currentBed) return null;
+  return `${adm.currentBed.room?.name || ''}호 ${adm.currentBed.label}`;
+}
+
 const TIME_SLOTS = [
   '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
   '12:00', '12:30', '13:00', '13:30',
@@ -58,7 +85,7 @@ router.get(
         deletedAt: null,
         date: { gte: new Date(startDate), lte: new Date(endDate) },
       },
-      include: { patient: { select: { id: true, name: true, emrPatientId: true, status: true } } },
+      include: { patient: PATIENT_INCLUDE },
       orderBy: [{ date: 'asc' }, { timeSlot: 'asc' }],
     });
 
@@ -86,8 +113,8 @@ router.get(
         grid[slot.therapistId][dateStr][slot.timeSlot] = {
           id: slot.id,
           patientId: slot.patientId,
-          patientName: slot.patient?.name || slot.patientName || '',
-          emrPatientId: slot.patient?.emrPatientId || '',
+          patientName: slot.patient.name,
+          emrPatientId: slot.patient.emrPatientId || '',
           treatmentCodes: slot.treatmentCodes,
           sessionMarker: slot.sessionMarker,
           patientType: slot.patientType,
@@ -95,6 +122,8 @@ router.get(
           notes: slot.notes,
           duration: slot.duration,
           version: slot.version,
+          clinicalInfo: (slot.patient as any).clinicalInfo || null,
+          bedInfo: serializeBedInfo((slot.patient as any).admissions || []),
         };
       }
     }
@@ -147,9 +176,7 @@ router.get(
         deletedAt: null,
         date: { gte: startDate, lte: endDate },
       },
-      include: {
-        patient: { select: { id: true, name: true, emrPatientId: true, status: true } },
-      },
+      include: { patient: PATIENT_INCLUDE },
       orderBy: [{ date: 'asc' }, { timeSlot: 'asc' }],
     });
 
@@ -177,8 +204,8 @@ router.get(
       grid[slot.therapistId][dateStr][slot.timeSlot] = {
         id: slot.id,
         patientId: slot.patientId,
-        patientName: slot.patient?.name || slot.patientName || '',
-        emrPatientId: slot.patient?.emrPatientId || '',
+        patientName: slot.patient.name,
+        emrPatientId: slot.patient.emrPatientId || '',
         treatmentCodes: slot.treatmentCodes,
         sessionMarker: slot.sessionMarker,
         patientType: slot.patientType,
@@ -186,6 +213,8 @@ router.get(
         notes: slot.notes,
         duration: slot.duration,
         version: slot.version,
+        clinicalInfo: (slot.patient as any).clinicalInfo || null,
+        bedInfo: serializeBedInfo((slot.patient as any).admissions || []),
       };
     }
 
@@ -276,8 +305,7 @@ router.get(
 // ─── POST /api/manual-therapy/slots ── 슬롯 생성 ───
 const createSlotSchema = z.object({
   therapistId: z.string().uuid(),
-  patientId: z.string().uuid().optional(),
-  patientName: z.string().optional(),
+  patientId: z.string().uuid(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   timeSlot: z.string().regex(/^\d{2}:\d{2}$/),
   duration: z.number().int().min(10).max(120).optional(),
@@ -319,7 +347,7 @@ router.post(
     if (existing) throw new AppError(409, 'DUPLICATE', '해당 시간에 이미 예약이 있습니다.');
 
     // 같은 환자 동시간 다른 치료사 검사
-    if (body.patientId) {
+    {
       const patientConflict = await prisma.manualTherapySlot.findFirst({
         where: {
           patientId: body.patientId,
@@ -337,8 +365,7 @@ router.post(
     const slot = await prisma.manualTherapySlot.create({
       data: {
         therapistId: body.therapistId,
-        patientId: body.patientId || null,
-        patientName: body.patientName || null,
+        patientId: body.patientId,
         date: new Date(body.date),
         timeSlot: body.timeSlot,
         duration: body.duration || 30,
@@ -360,8 +387,7 @@ router.post(
 
 // ─── PATCH /api/manual-therapy/slots/:id ── 슬롯 수정 ───
 const updateSlotSchema = z.object({
-  patientId: z.string().uuid().nullable().optional(),
-  patientName: z.string().nullable().optional(),
+  patientId: z.string().uuid().optional(),
   treatmentCodes: z.array(z.string()).optional(),
   sessionMarker: z.string().nullable().optional(),
   patientType: z.enum(['INPATIENT', 'OUTPATIENT']).optional(),
@@ -386,9 +412,10 @@ router.patch(
       throw new AppError(409, 'VERSION_CONFLICT', '다른 사용자가 이미 수정했습니다. 새로고침 후 다시 시도하세요.');
     }
 
+    const updateData: any = { ...data, version: { increment: 1 } };
     const updated = await prisma.manualTherapySlot.update({
       where: { id: req.params.id },
-      data: { ...data, version: { increment: 1 } },
+      data: updateData,
       include: {
         therapist: { select: { id: true, name: true } },
         patient: { select: { id: true, name: true, emrPatientId: true } },

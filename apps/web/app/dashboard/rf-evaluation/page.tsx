@@ -10,7 +10,6 @@ type TabType = 'evaluation' | 'round-prep' | 'round-print';
 interface EvaluationItem {
   id: string;
   patientId: string;
-  chartNumber: string | null;
   patientType: string;
   diagnosis: string | null;
   probeType: string | null;
@@ -87,7 +86,7 @@ export default function RfEvaluationPage() {
   // Create modal
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({
-    patientName: '', chartNumber: '', probeType: '', outputPercent: '',
+    patientName: '', probeType: '', outputPercent: '',
     temperature: '', treatmentTime: '', ivTreatment: '', patientIssue: '',
     doctorCode: 'C', roomNumber: '',
   });
@@ -148,7 +147,6 @@ export default function RfEvaluationPage() {
     try {
       const body: any = {
         patientName: createForm.patientName || undefined,
-        chartNumber: createForm.chartNumber || undefined,
         probeType: createForm.probeType || undefined,
         outputPercent: createForm.outputPercent ? parseInt(createForm.outputPercent) : undefined,
         temperature: createForm.temperature ? parseFloat(createForm.temperature) : undefined,
@@ -161,7 +159,7 @@ export default function RfEvaluationPage() {
       const res = await api('/api/rf-evaluation', { method: 'POST', body, token: accessToken || undefined });
       if (res.success) {
         setShowCreate(false);
-        setCreateForm({ patientName: '', chartNumber: '', probeType: '', outputPercent: '', temperature: '', treatmentTime: '', ivTreatment: '', patientIssue: '', doctorCode: 'C', roomNumber: '' });
+        setCreateForm({ patientName: '', probeType: '', outputPercent: '', temperature: '', treatmentTime: '', ivTreatment: '', patientIssue: '', doctorCode: 'C', roomNumber: '' });
         fetchEvaluations();
       }
     } catch { /* ignore */ }
@@ -267,7 +265,7 @@ export default function RfEvaluationPage() {
                   <tr key={ev.id} className="border-b hover:bg-slate-50">
                     <td className="px-3 py-2">
                       <div className="font-medium">{ev.patient?.name}</div>
-                      <div className="text-xs text-slate-400">{ev.chartNumber || ev.patient?.emrPatientId || ''}</div>
+                      <div className="text-xs text-slate-400">{ev.patient?.emrPatientId || ''}</div>
                     </td>
                     <td className="px-3 py-2">
                       <span className={`px-1.5 py-0.5 rounded text-xs ${ev.patientType === 'INPATIENT' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
@@ -401,11 +399,6 @@ export default function RfEvaluationPage() {
                 <label className="block text-xs text-slate-500 mb-1">환자이름 *</label>
                 <input type="text" value={createForm.patientName} onChange={(e) => setCreateForm({ ...createForm, patientName: e.target.value })}
                   className="w-full border rounded px-3 py-2 text-sm" placeholder="홍길동" />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-500 mb-1">차트번호</label>
-                <input type="text" value={createForm.chartNumber} onChange={(e) => setCreateForm({ ...createForm, chartNumber: e.target.value })}
-                  className="w-full border rounded px-3 py-2 text-sm" />
               </div>
               <div>
                 <label className="block text-xs text-slate-500 mb-1">도자</label>

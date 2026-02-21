@@ -562,7 +562,7 @@ export async function getManualTherapySchedule(args: Record<string, any>) {
       date: s.date.toISOString().slice(0, 10),
       time: s.timeSlot,
       therapist: s.therapist.name,
-      patient: s.patient?.name || s.patientName || '',
+      patient: s.patient.name,
       treatmentCodes: s.treatmentCodes,
       sessionMarker: s.sessionMarker,
       patientType: s.patientType,
@@ -590,6 +590,7 @@ export async function getRfSchedule(args: Record<string, any>) {
     include: {
       room: { select: { name: true } },
       patient: { select: { name: true, emrPatientId: true } },
+      doctor: { select: { doctorCode: true } },
     },
     orderBy: [{ startTime: 'asc' }],
   });
@@ -599,9 +600,9 @@ export async function getRfSchedule(args: Record<string, any>) {
     total: slots.length,
     slots: slots.map(s => ({
       room: s.room.name + '번',
-      patient: s.patient?.name || s.patientName || '',
-      chartNumber: s.chartNumber || s.patient?.emrPatientId || '',
-      doctorCode: s.doctorCode,
+      patient: s.patient.name,
+      chartNumber: s.patient?.emrPatientId || '',
+      doctorCode: s.doctor?.doctorCode || '',
       startTime: s.startTime,
       duration: s.duration,
       patientType: s.patientType,
@@ -1134,7 +1135,7 @@ export async function getRfEvaluations(args: Record<string, any>) {
     evaluations: evals.map(e => ({
       date: e.evaluatedAt.toISOString().slice(0, 10),
       patient: e.patient?.name,
-      chartNumber: e.chartNumber || e.patient?.emrPatientId,
+      chartNumber: e.patient?.emrPatientId || '',
       probeType: e.probeType,
       output: e.outputPercent ? `${e.outputPercent}%` : '',
       temperature: e.temperature ? `${e.temperature}℃` : '',

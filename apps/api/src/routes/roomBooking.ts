@@ -79,6 +79,7 @@ router.get(
         include: {
           patient: { select: { id: true, name: true } },
           room: { select: { name: true } },
+          doctor: { select: { doctorCode: true } },
         },
       }),
       // 처치 스케줄
@@ -138,7 +139,7 @@ router.get(
           time: s.startTime,
           duration: s.duration,
           detail: `고주파 ${s.room.name}번`,
-          doctor: s.doctorCode,
+          doctor: s.doctor?.doctorCode || '',
         });
       }
     }
@@ -253,13 +254,13 @@ router.get(
     const [manualCounts, rfCounts, procCounts] = await Promise.all([
       prisma.manualTherapySlot.groupBy({
         by: ['patientId', 'date'],
-        where: { date: { gte: startDate, lt: endDate }, status: { not: 'CANCELLED' }, deletedAt: null, patientId: { not: null } },
-        _count: true,
+        where: { date: { gte: startDate, lt: endDate }, status: { not: 'CANCELLED' }, deletedAt: null },
+        _count: { _all: true },
       }),
       prisma.rfScheduleSlot.groupBy({
         by: ['patientId', 'date'],
-        where: { date: { gte: startDate, lt: endDate }, status: { not: 'CANCELLED' }, deletedAt: null, patientId: { not: null } },
-        _count: true,
+        where: { date: { gte: startDate, lt: endDate }, status: { not: 'CANCELLED' }, deletedAt: null },
+        _count: { _all: true },
       }),
       prisma.procedureExecution.findMany({
         where: {
@@ -291,14 +292,14 @@ router.get(
       if (!m.patientId) continue;
       const d = toDateStr(new Date(m.date));
       ensureEntry(m.patientId, d);
-      patientDayMap[m.patientId][d].manual += m._count;
+      patientDayMap[m.patientId][d].manual += m._count._all;
       if (!patientDayMap[m.patientId][d].types.includes('도수')) patientDayMap[m.patientId][d].types.push('도수');
     }
     for (const r of rfCounts) {
       if (!r.patientId) continue;
       const d = toDateStr(new Date(r.date));
       ensureEntry(r.patientId, d);
-      patientDayMap[r.patientId][d].rf += r._count;
+      patientDayMap[r.patientId][d].rf += r._count._all;
       if (!patientDayMap[r.patientId][d].types.includes('고주파')) patientDayMap[r.patientId][d].types.push('고주파');
     }
     for (const p of procCounts) {

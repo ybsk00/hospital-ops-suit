@@ -12,6 +12,33 @@ function toDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// ─── 공통 Prisma include (임상정보 + 입원베드 포함) ───
+const RF_PATIENT_INCLUDE = {
+  select: {
+    id: true, name: true, emrPatientId: true, status: true,
+    clinicalInfo: {
+      select: {
+        diagnosis: true, surgeryHistory: true, metastasis: true,
+        ctxHistory: true, chemoPort: true, rtHistory: true, notes: true,
+      },
+    },
+    admissions: {
+      where: { deletedAt: null, status: 'ADMITTED' as const },
+      select: {
+        id: true,
+        currentBed: { select: { label: true, room: { select: { name: true } } } },
+      },
+      take: 1,
+    },
+  },
+} as const;
+
+function serializeBedInfo(admissions: any[]): string | null {
+  const adm = admissions?.[0];
+  if (!adm?.currentBed) return null;
+  return `${adm.currentBed.room?.name || ''}호 ${adm.currentBed.label}`;
+}
+
 // ─── 타임슬롯 정의 (09:00~18:30, 30분 간격) ───
 const TIME_SLOTS = [
   '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
@@ -53,7 +80,8 @@ router.get(
         date: targetDate,
       },
       include: {
-        patient: { select: { id: true, name: true, emrPatientId: true, status: true } },
+        patient: RF_PATIENT_INCLUDE,
+        doctor: { select: { doctorCode: true, name: true } },
       },
       orderBy: [{ startTime: 'asc' }],
     });
@@ -83,10 +111,9 @@ router.get(
       grid[slot.roomId][slot.startTime] = {
         id: slot.id,
         patientId: slot.patientId,
-        patientName: slot.patient?.name || slot.patientName || '',
-        emrPatientId: slot.patient?.emrPatientId || '',
-        chartNumber: slot.chartNumber || slot.patient?.emrPatientId || '',
-        doctorCode: slot.doctorCode,
+        patientName: slot.patient.name,
+        emrPatientId: slot.patient.emrPatientId || '',
+        doctorCode: slot.doctor.doctorCode || '',
         duration: slot.duration,
         patientType: slot.patientType,
         status: slot.status,
@@ -94,6 +121,8 @@ router.get(
         version: slot.version,
         startMin,
         endMin,
+        clinicalInfo: (slot.patient as any).clinicalInfo || null,
+        bedInfo: serializeBedInfo((slot.patient as any).admissions || []),
       };
 
       // duration에 따라 중간 슬롯을 OCCUPIED로 표시
@@ -176,7 +205,8 @@ router.get(
         date: { gte: new Date(startDate), lte: new Date(endDate) },
       },
       include: {
-        patient: { select: { id: true, name: true, emrPatientId: true } },
+        patient: RF_PATIENT_INCLUDE,
+        doctor: { select: { doctorCode: true, name: true } },
       },
       orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
     });
@@ -210,8 +240,9 @@ router.get(
       day.byRoom[slot.roomId].slots.push({
         startTime: slot.startTime,
         duration: slot.duration,
-        patientName: slot.patient?.name || slot.patientName || '',
-        doctorCode: slot.doctorCode,
+        patientName: slot.patient.name,
+        doctorCode: slot.doctor.doctorCode || '',
+        patientType: slot.patientType,
         status: slot.status,
       });
     }
@@ -264,7 +295,8 @@ router.get(
         date: { gte: startDate, lte: endDate },
       },
       include: {
-        patient: { select: { id: true, name: true, emrPatientId: true } },
+        patient: RF_PATIENT_INCLUDE,
+        doctor: { select: { doctorCode: true, name: true } },
       },
       orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
     });
@@ -297,13 +329,15 @@ router.get(
       grid[slot.roomId][dateStr][slot.startTime] = {
         id: slot.id,
         patientId: slot.patientId,
-        patientName: slot.patient?.name || slot.patientName || '',
-        chartNumber: slot.chartNumber || slot.patient?.emrPatientId || '',
-        doctorCode: slot.doctorCode,
+        patientName: slot.patient.name,
+        emrPatientId: slot.patient.emrPatientId || '',
+        doctorCode: slot.doctor.doctorCode || '',
         duration: slot.duration,
         patientType: slot.patientType,
         status: slot.status,
         notes: slot.notes,
+        clinicalInfo: (slot.patient as any).clinicalInfo || null,
+        bedInfo: serializeBedInfo((slot.patient as any).admissions || []),
       };
 
       // OCCUPIED 표시
@@ -411,10 +445,9 @@ router.get(
 // ─── POST /api/rf-schedule/slots ── 슬롯 생성 (30분 버퍼 충돌 검사) ───
 const createSlotSchema = z.object({
   roomId: z.string().uuid(),
-  patientId: z.string().uuid().optional(),
-  patientName: z.string().optional(),
-  chartNumber: z.string().optional(),
-  doctorCode: z.string().min(1),
+  patientId: z.string().uuid(),
+  doctorId: z.string().optional(),
+  doctorCode: z.string().optional(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   startTime: z.string().regex(/^\d{2}:\d{2}$/),
   duration: z.number().int().min(30).max(240),
@@ -429,6 +462,15 @@ router.post(
   requirePermission('SCHEDULING', 'WRITE'),
   asyncHandler(async (req: Request, res: Response) => {
     const body = createSlotSchema.parse(req.body);
+
+    // doctorCode → doctorId 자동 해석 (하위호환)
+    let resolvedDoctorId = body.doctorId;
+    if (!resolvedDoctorId && body.doctorCode) {
+      const doc = await prisma.doctor.findFirst({ where: { doctorCode: body.doctorCode } });
+      if (!doc) throw new AppError(400, 'INVALID_REQUEST', `의사 코드 '${body.doctorCode}'를 찾을 수 없습니다.`);
+      resolvedDoctorId = doc.id;
+    }
+    if (!resolvedDoctorId) throw new AppError(400, 'INVALID_REQUEST', 'doctorId 또는 doctorCode가 필요합니다.');
 
     // 기계 존재 확인
     const room = await prisma.rfTreatmentRoom.findFirst({
@@ -469,7 +511,7 @@ router.post(
     }
 
     // 같은 환자 동시간 다른 기계 검사
-    if (body.patientId) {
+    {
       const patientConflict = await prisma.rfScheduleSlot.findFirst({
         where: {
           patientId: body.patientId,
@@ -488,10 +530,8 @@ router.post(
     const slot = await prisma.rfScheduleSlot.create({
       data: {
         roomId: body.roomId,
-        patientId: body.patientId || null,
-        patientName: body.patientName || null,
-        chartNumber: body.chartNumber || null,
-        doctorCode: body.doctorCode,
+        patientId: body.patientId,
+        doctorId: resolvedDoctorId,
         date: new Date(body.date),
         startTime: body.startTime,
         duration: body.duration,
@@ -511,9 +551,8 @@ router.post(
 
 // ─── PATCH /api/rf-schedule/slots/:id ── 슬롯 수정 ───
 const updateSlotSchema = z.object({
-  patientId: z.string().uuid().nullable().optional(),
-  patientName: z.string().nullable().optional(),
-  chartNumber: z.string().nullable().optional(),
+  patientId: z.string().uuid().optional(),
+  doctorId: z.string().optional(),
   doctorCode: z.string().optional(),
   duration: z.number().int().min(30).max(240).optional(),
   patientType: z.enum(['INPATIENT', 'OUTPATIENT']).optional(),
@@ -528,7 +567,13 @@ router.patch(
   requirePermission('SCHEDULING', 'WRITE'),
   asyncHandler(async (req: Request, res: Response) => {
     const body = updateSlotSchema.parse(req.body);
-    const { version, patientId, ...rest } = body;
+    const { version, patientId, doctorCode: bodyDoctorCode, ...rest } = body;
+
+    // doctorCode → doctorId 자동 해석 (하위호환)
+    if (!rest.doctorId && bodyDoctorCode) {
+      const doc = await prisma.doctor.findFirst({ where: { doctorCode: bodyDoctorCode } });
+      if (doc) rest.doctorId = doc.id;
+    }
 
     const existing = await prisma.rfScheduleSlot.findFirst({
       where: { id: req.params.id, deletedAt: null },

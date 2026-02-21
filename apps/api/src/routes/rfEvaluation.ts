@@ -67,7 +67,6 @@ router.get(
 // =====================================================================
 const createEvalSchema = z.object({
   patientId: z.string().uuid().optional(),
-  chartNumber: z.string().optional(),
   patientName: z.string().optional(),
   patientType: z.enum(['INPATIENT', 'OUTPATIENT']).optional(),
   diagnosis: z.string().optional(),
@@ -89,14 +88,8 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const body = createEvalSchema.parse(req.body);
 
-    // 차트번호로 환자 검색
+    // 환자 검색
     let patientId = body.patientId;
-    if (!patientId && body.chartNumber) {
-      const patient = await prisma.patient.findFirst({
-        where: { emrPatientId: body.chartNumber, deletedAt: null },
-      });
-      if (patient) patientId = patient.id;
-    }
     if (!patientId && body.patientName) {
       const patient = await prisma.patient.findFirst({
         where: { name: { contains: body.patientName }, deletedAt: null },
@@ -110,7 +103,6 @@ router.post(
     const evaluation = await prisma.rfTreatmentEvaluation.create({
       data: {
         patientId,
-        chartNumber: body.chartNumber,
         patientType: body.patientType || 'INPATIENT',
         diagnosis: body.diagnosis,
         probeType: body.probeType,
@@ -226,7 +218,7 @@ router.get(
 
     // 해당 의사, 해당 날짜 RF 스케줄
     const whereSlot: any = { date: targetDate, status: { not: 'CANCELLED' }, deletedAt: null };
-    if (doctor) whereSlot.doctorCode = { contains: doctor };
+    if (doctor) whereSlot.doctor = { doctorCode: { contains: doctor } };
 
     const rfSlots = await prisma.rfScheduleSlot.findMany({
       where: whereSlot,
@@ -238,6 +230,7 @@ router.get(
           },
         },
         room: { select: { name: true } },
+        doctor: { select: { doctorCode: true, name: true } },
       },
       orderBy: { startTime: 'asc' },
     });
@@ -286,8 +279,8 @@ router.get(
         diagnosis: s.patient?.clinicalInfo?.diagnosis,
         startTime: s.startTime,
         duration: s.duration,
-        doctorCode: s.doctorCode,
-        recentEvals: s.patientId ? (recentEvals[s.patientId] || []) : [],
+        doctorCode: s.doctor?.doctorCode || '',
+        recentEvals: recentEvals[s.patientId] || [],
       };
     });
 
@@ -315,7 +308,7 @@ router.get(
     const targetDate = new Date(dateParam + 'T00:00:00');
 
     const whereSlot: any = { date: targetDate, status: { not: 'CANCELLED' }, deletedAt: null };
-    if (doctor) whereSlot.doctorCode = { contains: doctor };
+    if (doctor) whereSlot.doctor = { doctorCode: { contains: doctor } };
 
     const rfSlots = await prisma.rfScheduleSlot.findMany({
       where: whereSlot,
@@ -327,6 +320,7 @@ router.get(
           },
         },
         room: { select: { name: true } },
+        doctor: { select: { doctorCode: true, name: true } },
       },
       orderBy: [{ startTime: 'asc' }, { room: { displayOrder: 'asc' } }],
     });
@@ -350,8 +344,8 @@ router.get(
       const age = dob ? Math.floor((Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000)) : null;
       return {
         roomNumber: s.room.name,
-        chartNumber: s.patient?.emrPatientId || s.chartNumber,
-        name: s.patient?.name || s.patientName,
+        chartNumber: s.patient?.emrPatientId || '',
+        name: s.patient?.name || '',
         ageSex: age !== null ? `${age}/${s.patient?.sex || ''}` : '',
         diagnosis: s.patient?.clinicalInfo?.diagnosis || '',
         startTime: s.startTime,

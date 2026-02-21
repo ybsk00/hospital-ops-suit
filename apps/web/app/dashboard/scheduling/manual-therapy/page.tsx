@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuthStore } from '../../../../stores/auth';
 import { api } from '../../../../lib/api';
+import { useScheduleRefresh } from '../../../../hooks/useScheduleRefresh';
+import SlotTooltip, { ClinicalInfo } from '../../../../components/scheduling/SlotTooltip';
 import {
   ChevronLeft,
   ChevronRight,
@@ -35,6 +37,8 @@ interface SlotData {
   notes: string | null;
   duration: number;
   version: number;
+  clinicalInfo?: ClinicalInfo | null;
+  bedInfo?: string | null;
 }
 
 interface WeeklyData {
@@ -55,6 +59,17 @@ interface PatientSearchResult {
   isAdmitted: boolean;
 }
 
+interface MonthlyData {
+  year: number;
+  month: number;
+  therapists: Therapist[];
+  timeSlots: string[];
+  weeks: { start: string; end: string; dates: string[] }[];
+  grid: Record<string, Record<string, Record<string, SlotData>>>;
+  remarks: { id: string; date: string; content: string }[];
+  stats: { totalBooked: number; totalCompleted: number; noShows: number; cancelled: number };
+}
+
 // ─── Constants ───
 const DAY_LABELS = ['월', '화', '수', '목', '금', '토'];
 
@@ -68,24 +83,24 @@ const TREATMENT_CODES = [
 
 const SESSION_MARKERS = ['IN', 'IN20', 'W1', 'W2', 'LTU', '신환', '재진'];
 
+// ─── 구글시트 스타일 색상 ───
 const PATIENT_TYPE_STYLES: Record<string, string> = {
-  INPATIENT: 'bg-pink-50 border-pink-200',
-  OUTPATIENT: 'bg-green-50 border-green-200',
+  INPATIENT: 'bg-yellow-100 border-yellow-300',
+  OUTPATIENT: 'bg-white border-slate-200',
 };
 
 const STATUS_STYLES: Record<string, string> = {
   BOOKED: '',
-  COMPLETED: 'opacity-60',
-  NO_SHOW: 'bg-yellow-50 border-yellow-300',
-  CANCELLED: 'opacity-30 line-through',
+  COMPLETED: 'bg-green-50 border-green-200',
+  NO_SHOW: 'bg-red-50 border-red-200',
+  CANCELLED: 'bg-red-100 border-red-300 line-through opacity-50',
 };
 
-// ─── 로컬 날짜 문자열 (KST 안전) ───
+// ─── Helpers ───
 function toDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-// ─── Helper ───
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00');
   return `${d.getMonth() + 1}/${d.getDate()}`;
@@ -94,9 +109,8 @@ function formatDate(dateStr: string): string {
 function getWeekLabel(start: string, end: string): string {
   const s = new Date(start + 'T00:00:00');
   const e = new Date(end + 'T00:00:00');
-  const y = s.getFullYear();
   const weekNum = Math.ceil(s.getDate() / 7);
-  return `${y}년 ${s.getMonth() + 1}월 ${weekNum}주차 (${s.getMonth() + 1}/${s.getDate()}~${e.getMonth() + 1}/${e.getDate()})`;
+  return `${s.getFullYear()}년 ${s.getMonth() + 1}월 ${weekNum}주차 (${s.getMonth() + 1}/${s.getDate()}~${e.getMonth() + 1}/${e.getDate()})`;
 }
 
 function shiftWeek(dateStr: string, offset: number): string {
@@ -105,12 +119,153 @@ function shiftWeek(dateStr: string, offset: number): string {
   return toDateStr(d);
 }
 
+// ─── SlotCell 컴포넌트 ───
+function SlotCell({
+  slot,
+  compact,
+  onClick,
+}: {
+  slot: SlotData;
+  compact?: boolean;
+  onClick?: () => void;
+}) {
+  const baseStyle = slot.status === 'CANCELLED' || slot.status === 'NO_SHOW'
+    ? STATUS_STYLES[slot.status]
+    : `${PATIENT_TYPE_STYLES[slot.patientType] || 'bg-white border-slate-200'} ${STATUS_STYLES[slot.status] || ''}`;
+
+  return (
+    <SlotTooltip
+      patientName={slot.patientName}
+      emrPatientId={slot.emrPatientId}
+      patientType={slot.patientType}
+      bedInfo={slot.bedInfo}
+      clinicalInfo={slot.clinicalInfo}
+      treatmentCodes={slot.treatmentCodes}
+      slotNotes={slot.notes}
+    >
+      <div
+        onClick={onClick}
+        className={`px-1 py-0.5 border rounded cursor-pointer transition-colors ${baseStyle} ${compact ? 'min-h-[26px]' : 'min-h-[36px]'}`}
+      >
+        <div className={compact ? 'text-[10px] leading-tight' : 'text-[11px] leading-snug'}>
+          <div className="flex items-center gap-0.5">
+            <span className="font-semibold text-slate-900 truncate">{slot.patientName}</span>
+            {slot.sessionMarker && (
+              <span className="text-[9px] font-medium text-blue-600 shrink-0">{slot.sessionMarker}</span>
+            )}
+          </div>
+          {!compact && slot.treatmentCodes?.length > 0 && (
+            <div className="flex gap-0.5 mt-0.5">
+              {slot.treatmentCodes.map((code: string) => {
+                const tc = TREATMENT_CODES.find((c) => c.code === code);
+                return (
+                  <span key={code} className={`px-0.5 rounded text-[9px] leading-tight ${tc?.color || 'bg-slate-100 text-slate-500'}`}>
+                    {code}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </SlotTooltip>
+  );
+}
+
+// ─── WeeklyGrid 서브컴포넌트 (주간/월간 공용) ───
+function WeeklyGrid({
+  weekDates,
+  therapists,
+  timeSlots,
+  grid,
+  compact,
+  onCellClick,
+}: {
+  weekDates: string[];
+  therapists: Therapist[];
+  timeSlots: string[];
+  grid: Record<string, Record<string, Record<string, SlotData>>>;
+  compact?: boolean;
+  onCellClick?: (therapist: Therapist, date: string, timeSlot: string, slot: SlotData | null) => void;
+}) {
+  const totalCols = weekDates.length * therapists.length;
+  const today = toDateStr(new Date());
+
+  return (
+    <div className="min-w-[900px]">
+      {/* Header */}
+      <div className="grid border-b-2 border-slate-300" style={{ gridTemplateColumns: `50px repeat(${totalCols}, minmax(${compact ? '48px' : '60px'}, 1fr))` }}>
+        <div className="px-1 py-1.5 text-[10px] font-semibold text-slate-500 border-r border-slate-200 flex items-center justify-center">
+          시간
+        </div>
+        {weekDates.map((date, idx) => {
+          const dayLabel = DAY_LABELS[idx % 6];
+          const isSat = dayLabel === '토';
+          const isToday = date === today;
+          return (
+            <div
+              key={date}
+              className={`text-center border-r-2 border-slate-300 last:border-r-0 ${isSat ? 'bg-blue-50/50' : ''}`}
+              style={{ gridColumn: `span ${therapists.length}` }}
+            >
+              <div className={`py-1 text-[10px] font-bold border-b border-slate-200 ${isToday ? 'bg-blue-100 text-blue-700' : 'text-slate-700'}`}>
+                {formatDate(date)}({dayLabel})
+              </div>
+              <div className="grid" style={{ gridTemplateColumns: `repeat(${therapists.length}, 1fr)` }}>
+                {therapists.map((t) => (
+                  <div key={t.id} className="text-[10px] py-0.5 text-slate-500 border-r border-slate-100 last:border-r-0 truncate px-0.5 font-medium">
+                    {t.name}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Rows */}
+      {timeSlots.map((ts) => (
+        <div
+          key={ts}
+          className="grid border-b border-slate-100 hover:bg-slate-50/30"
+          style={{ gridTemplateColumns: `50px repeat(${totalCols}, minmax(${compact ? '48px' : '60px'}, 1fr))` }}
+        >
+          <div className={`px-1 py-0.5 text-[10px] font-mono text-slate-500 border-r border-slate-200 flex items-center justify-center ${compact ? 'min-h-[26px]' : 'min-h-[36px]'}`}>
+            {ts}
+          </div>
+          {weekDates.map((date, idx) => {
+            const isSat = DAY_LABELS[idx % 6] === '토';
+            return therapists.map((t) => {
+              const slot = grid[t.id]?.[date]?.[ts] || null;
+              return (
+                <div
+                  key={`${t.id}-${date}-${ts}`}
+                  onClick={() => onCellClick?.(t, date, ts, slot)}
+                  className={`px-0.5 py-0.5 border-r border-slate-100 cursor-pointer transition-colors ${compact ? 'min-h-[26px]' : 'min-h-[36px]'} ${
+                    !slot ? `hover:bg-blue-50/40 ${isSat ? 'bg-blue-50/20' : ''}` : ''
+                  } ${
+                    // 요일 경계 구분선
+                    therapists.indexOf(t) === therapists.length - 1 ? 'border-r-2 border-r-slate-300' : ''
+                  }`}
+                >
+                  {slot ? (
+                    <SlotCell slot={slot} compact={compact} />
+                  ) : null}
+                </div>
+              );
+            });
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── SlotModal ───
 function SlotModal({
   open,
   onClose,
   onSave,
-  onDelete,
   therapist,
   date,
   timeSlot,
@@ -120,7 +275,6 @@ function SlotModal({
   open: boolean;
   onClose: () => void;
   onSave: () => void;
-  onDelete?: () => void;
   therapist: Therapist;
   date: string;
   timeSlot: string;
@@ -137,7 +291,7 @@ function SlotModal({
   const [patientType, setPatientType] = useState<'INPATIENT' | 'OUTPATIENT'>('INPATIENT');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
-  const searchTimer = useRef<NodeJS.Timeout | null>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (existingSlot) {
@@ -160,21 +314,13 @@ function SlotModal({
 
   const searchPatients = useCallback(
     async (q: string) => {
-      if (q.length < 1) {
-        setSearchResults([]);
-        return;
-      }
+      if (q.length < 1) { setSearchResults([]); return; }
       setSearching(true);
       try {
-        const res = await api<PatientSearchResult[]>(`/api/manual-therapy/patient-search?q=${encodeURIComponent(q)}`, {
-          token: accessToken,
-        });
+        const res = await api<PatientSearchResult[]>(`/api/manual-therapy/patient-search?q=${encodeURIComponent(q)}`, { token: accessToken });
         setSearchResults(res.data || []);
-      } catch {
-        setSearchResults([]);
-      } finally {
-        setSearching(false);
-      }
+      } catch { setSearchResults([]); }
+      finally { setSearching(false); }
     },
     [accessToken],
   );
@@ -207,7 +353,6 @@ function SlotModal({
           token: accessToken,
           body: {
             patientId: selectedPatient?.id || existingSlot.patientId || undefined,
-            patientName: patientName.trim(),
             treatmentCodes,
             sessionMarker: sessionMarker || null,
             patientType,
@@ -222,7 +367,6 @@ function SlotModal({
           body: {
             therapistId: therapist.id,
             patientId: selectedPatient?.id || undefined,
-            patientName: patientName.trim(),
             date,
             timeSlot,
             treatmentCodes,
@@ -243,10 +387,7 @@ function SlotModal({
   const handleDelete = async () => {
     if (!existingSlot || !confirm('이 예약을 취소하시겠습니까?')) return;
     try {
-      await api(`/api/manual-therapy/slots/${existingSlot.id}`, {
-        method: 'DELETE',
-        token: accessToken,
-      });
+      await api(`/api/manual-therapy/slots/${existingSlot.id}`, { method: 'DELETE', token: accessToken });
       onSave();
     } catch (err: any) {
       alert(err.message || '삭제 실패');
@@ -261,29 +402,16 @@ function SlotModal({
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b">
           <h3 className="font-semibold text-lg">{existingSlot ? '예약 수정' : '예약 추가'}</h3>
-          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100">
-            <X size={20} />
-          </button>
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100"><X size={20} /></button>
         </div>
-
         <div className="px-5 py-4 space-y-4">
-          {/* Info row */}
           <div className="flex gap-4 text-sm text-slate-600">
-            <span className="flex items-center gap-1">
-              <User size={14} /> {therapist.name}
-            </span>
-            <span className="flex items-center gap-1">
-              <Calendar size={14} /> {dayLabel}
-            </span>
-            <span className="flex items-center gap-1">
-              <Clock size={14} /> {timeSlot}
-            </span>
+            <span className="flex items-center gap-1"><User size={14} /> {therapist.name}</span>
+            <span className="flex items-center gap-1"><Calendar size={14} /> {dayLabel}</span>
+            <span className="flex items-center gap-1"><Clock size={14} /> {timeSlot}</span>
           </div>
-
-          {/* Patient search */}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">환자</label>
             {!existingSlot && (
@@ -305,9 +433,7 @@ function SlotModal({
                         className="w-full px-3 py-2 text-left text-sm hover:bg-blue-50 flex justify-between"
                       >
                         <span className="font-medium">{p.name}</span>
-                        <span className="text-slate-400">
-                          {p.emrPatientId} {p.isAdmitted ? '(입원)' : '(외래)'}
-                        </span>
+                        <span className="text-slate-400">{p.emrPatientId} {p.isAdmitted ? '(입원)' : '(외래)'}</span>
                       </button>
                     ))}
                   </div>
@@ -322,8 +448,6 @@ function SlotModal({
               className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
-
-          {/* Treatment codes */}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">치료코드</label>
             <div className="flex flex-wrap gap-2">
@@ -332,9 +456,7 @@ function SlotModal({
                   key={tc.code}
                   onClick={() => toggleCode(tc.code)}
                   className={`px-3 py-1 rounded-full text-xs font-medium border transition ${
-                    treatmentCodes.includes(tc.code)
-                      ? tc.color + ' border-current'
-                      : 'bg-slate-50 text-slate-400 border-slate-200'
+                    treatmentCodes.includes(tc.code) ? tc.color + ' border-current' : 'bg-slate-50 text-slate-400 border-slate-200'
                   }`}
                 >
                   {tc.label}
@@ -342,69 +464,36 @@ function SlotModal({
               ))}
             </div>
           </div>
-
-          {/* Session marker + Patient type */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">세션마커</label>
-              <select
-                value={sessionMarker}
-                onChange={(e) => setSessionMarker(e.target.value)}
-                className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-              >
+              <select value={sessionMarker} onChange={(e) => setSessionMarker(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500">
                 <option value="">없음</option>
-                {SESSION_MARKERS.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
+                {SESSION_MARKERS.map((m) => (<option key={m} value={m}>{m}</option>))}
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">환자구분</label>
-              <select
-                value={patientType}
-                onChange={(e) => setPatientType(e.target.value as any)}
-                className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-              >
+              <select value={patientType} onChange={(e) => setPatientType(e.target.value as any)} className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500">
                 <option value="INPATIENT">입원</option>
                 <option value="OUTPATIENT">외래</option>
               </select>
             </div>
           </div>
-
-          {/* Notes */}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">비고</label>
-            <input
-              type="text"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="메모"
-              className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-            />
+            <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="메모" className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500" />
           </div>
         </div>
-
-        {/* Footer */}
         <div className="flex items-center justify-between px-5 py-4 border-t bg-slate-50 rounded-b-xl">
           <div>
             {existingSlot && (
-              <button onClick={handleDelete} className="flex items-center gap-1 text-sm text-red-600 hover:text-red-700">
-                <Trash2 size={14} />
-                취소
-              </button>
+              <button onClick={handleDelete} className="flex items-center gap-1 text-sm text-red-600 hover:text-red-700"><Trash2 size={14} /> 취소</button>
             )}
           </div>
           <div className="flex gap-2">
-            <button onClick={onClose} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-200 rounded-lg">
-              닫기
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={!patientName.trim() || saving}
-              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-            >
+            <button onClick={onClose} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-200 rounded-lg">닫기</button>
+            <button onClick={handleSave} disabled={!patientName.trim() || saving} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
               {saving ? '저장 중...' : existingSlot ? '수정' : '저장'}
             </button>
           </div>
@@ -418,16 +507,19 @@ function SlotModal({
 function RemarkEditor({
   remarks,
   weekDates,
+  therapistCount,
   accessToken,
   onUpdate,
 }: {
   remarks: { id: string; date: string; content: string }[];
   weekDates: string[];
+  therapistCount: number;
   accessToken: string;
   onUpdate: () => void;
 }) {
   const [editingDate, setEditingDate] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
+  const totalCols = weekDates.length * therapistCount;
 
   const startEdit = (date: string) => {
     const existing = remarks.find((r) => r.date === date);
@@ -441,27 +533,12 @@ function RemarkEditor({
     try {
       if (existing) {
         if (editContent.trim()) {
-          await api(`/api/staff-notes/${existing.id}`, {
-            method: 'PATCH',
-            token: accessToken,
-            body: { content: editContent.trim() },
-          });
+          await api(`/api/staff-notes/${existing.id}`, { method: 'PATCH', token: accessToken, body: { content: editContent.trim() } });
         } else {
-          await api(`/api/staff-notes/${existing.id}`, {
-            method: 'DELETE',
-            token: accessToken,
-          });
+          await api(`/api/staff-notes/${existing.id}`, { method: 'DELETE', token: accessToken });
         }
       } else if (editContent.trim()) {
-        await api('/api/staff-notes', {
-          method: 'POST',
-          token: accessToken,
-          body: {
-            noteType: 'MANUAL_THERAPY_REMARK',
-            date: editingDate,
-            content: editContent.trim(),
-          },
-        });
+        await api('/api/staff-notes', { method: 'POST', token: accessToken, body: { noteType: 'MANUAL_THERAPY_REMARK', date: editingDate, content: editContent.trim() } });
       }
       setEditingDate(null);
       onUpdate();
@@ -472,57 +549,42 @@ function RemarkEditor({
 
   return (
     <div className="border-t-2 border-slate-300 bg-slate-50">
-      <div className="grid" style={{ gridTemplateColumns: '46px 1fr' }}>
-        <div className="px-1 py-1.5 text-[10px] font-semibold text-slate-500 border-r border-slate-200 flex items-center">
+      <div className="grid" style={{ gridTemplateColumns: `50px repeat(${totalCols}, minmax(60px, 1fr))` }}>
+        <div className="px-1 py-1.5 text-[10px] font-semibold text-slate-500 border-r border-slate-200 flex items-center justify-center">
           비고
         </div>
-        <div className="grid" style={{ gridTemplateColumns: `repeat(${weekDates.length}, 1fr)` }}>
-          {weekDates.map((date) => {
-            const remark = remarks.find((r) => r.date === date);
-            const isEditing = editingDate === date;
-            return (
-              <div key={date} className="px-2 py-1.5 border-r border-slate-200 last:border-r-0 min-h-[36px]">
-                {isEditing ? (
-                  <div className="flex gap-1">
-                    <input
-                      type="text"
-                      value={editContent}
-                      onChange={(e) => setEditContent(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') save();
-                        if (e.key === 'Escape') setEditingDate(null);
-                      }}
-                      autoFocus
-                      className="flex-1 text-xs px-1 py-0.5 border rounded"
-                    />
-                    <button onClick={save} className="text-blue-600 hover:text-blue-700">
-                      <Check size={14} />
-                    </button>
-                  </div>
-                ) : (
-                  <div onClick={() => startEdit(date)} className="cursor-pointer text-xs text-slate-600 hover:text-slate-900 min-h-[20px]">
-                    {remark?.content || <span className="text-slate-300">클릭하여 입력</span>}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        {weekDates.map((date) => {
+          const remark = remarks.find((r) => r.date === date);
+          const isEditing = editingDate === date;
+          return (
+            <div
+              key={date}
+              className="px-2 py-1.5 border-r-2 border-slate-300 last:border-r-0 min-h-[36px]"
+              style={{ gridColumn: `span ${therapistCount}` }}
+            >
+              {isEditing ? (
+                <div className="flex gap-1">
+                  <input
+                    type="text"
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditingDate(null); }}
+                    autoFocus
+                    className="flex-1 text-xs px-1 py-0.5 border rounded"
+                  />
+                  <button onClick={save} className="text-blue-600 hover:text-blue-700"><Check size={14} /></button>
+                </div>
+              ) : (
+                <div onClick={() => startEdit(date)} className="cursor-pointer text-xs text-slate-600 hover:text-slate-900 min-h-[20px]">
+                  {remark?.content || <span className="text-slate-300">클릭하여 입력</span>}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
-}
-
-// ─── Types for monthly ───
-interface MonthlyData {
-  year: number;
-  month: number;
-  therapists: { id: string; name: string; workSchedule: Record<string, boolean> | null }[];
-  timeSlots: string[];
-  weeks: { start: string; end: string; dates: string[] }[];
-  grid: Record<string, Record<string, Record<string, SlotData>>>;
-  remarks: { id: string; date: string; content: string }[];
-  stats: { totalBooked: number; totalCompleted: number; noShows: number; cancelled: number };
 }
 
 type ViewMode = 'weekly' | 'monthly';
@@ -535,12 +597,10 @@ export default function ManualTherapyPage() {
   const [data, setData] = useState<WeeklyData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Monthly state
   const [monthYear, setMonthYear] = useState(() => new Date().getFullYear());
   const [monthNum, setMonthNum] = useState(() => new Date().getMonth() + 1);
   const [monthlyData, setMonthlyData] = useState<MonthlyData | null>(null);
 
-  // Modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [modalTherapist, setModalTherapist] = useState<Therapist | null>(null);
   const [modalDate, setModalDate] = useState('');
@@ -578,6 +638,13 @@ export default function ManualTherapyPage() {
     else fetchMonthlyData();
   }, [viewMode, fetchData, fetchMonthlyData]);
 
+  // WebSocket 실시간 갱신
+  const refreshActive = useCallback(() => {
+    if (viewMode === 'weekly') fetchData();
+    else fetchMonthlyData();
+  }, [viewMode, fetchData, fetchMonthlyData]);
+  useScheduleRefresh(refreshActive);
+
   const openSlotModal = (therapist: Therapist, date: string, timeSlot: string, slot: SlotData | null) => {
     setModalTherapist(therapist);
     setModalDate(date);
@@ -588,12 +655,12 @@ export default function ManualTherapyPage() {
 
   const handleModalSave = () => {
     setModalOpen(false);
-    fetchData();
+    if (viewMode === 'weekly') fetchData();
+    else fetchMonthlyData();
   };
 
   const goToday = () => setWeekDate(toDateStr(new Date()));
 
-  // 월간 네비게이션
   const shiftMonth = (offset: number) => {
     let y = monthYear;
     let m = monthNum + offset;
@@ -608,42 +675,35 @@ export default function ManualTherapyPage() {
     setMonthNum(new Date().getMonth() + 1);
   };
 
-  // 월간 → 주간 전환
   const navigateToWeek = (dateStr: string) => {
     setWeekDate(dateStr);
     setViewMode('weekly');
   };
 
-  // 월간 캘린더 날짜 배열 생성
-  const getMonthCalendarDays = (year: number, month: number): (string | null)[] => {
-    const firstDay = new Date(year, month - 1, 1).getDay(); // 0=일
-    const daysInMonth = new Date(year, month, 0).getDate();
-    const days: (string | null)[] = [];
-    for (let i = 0; i < firstDay; i++) days.push(null); // 이전 달 패딩
-    for (let d = 1; d <= daysInMonth; d++) {
-      days.push(`${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
-    }
-    return days;
+  const { week, therapists, timeSlots, grid, remarks } = data || {
+    week: { start: '', end: '' },
+    therapists: [] as Therapist[],
+    timeSlots: [] as string[],
+    grid: {} as Record<string, Record<string, Record<string, SlotData>>>,
+    remarks: [] as { id: string; date: string; content: string }[],
   };
 
-  // 초기 전체 로딩은 제거 - 각 뷰 내부에서 로딩 표시
-
-  const currentStats = viewMode === 'weekly' ? data?.stats : monthlyData?.stats;
-  const { week, therapists, timeSlots, grid, remarks, stats } = data || { week: { start: '', end: '' }, therapists: [] as Therapist[], timeSlots: [] as string[], grid: {} as Record<string, Record<string, Record<string, any>>>, remarks: [] as any[], stats: { totalBooked: 0, totalCompleted: 0, noShows: 0, cancelled: 0 } };
   const weekDates: string[] = [];
-  const startD = new Date(week.start + 'T00:00:00');
-  for (let i = 0; i < 6; i++) {
-    const dd = new Date(startD);
-    dd.setDate(startD.getDate() + i);
-    weekDates.push(toDateStr(dd));
+  if (week.start) {
+    const startD = new Date(week.start + 'T00:00:00');
+    for (let i = 0; i < 6; i++) {
+      const dd = new Date(startD);
+      dd.setDate(startD.getDate() + i);
+      weekDates.push(toDateStr(dd));
+    }
   }
 
-  const totalCols = weekDates.length * therapists.length;
+  const currentStats = viewMode === 'weekly' ? data?.stats : monthlyData?.stats;
 
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-4">
           <div>
             <h1 className="text-xl font-bold text-slate-900">도수예약 현황</h1>
@@ -664,11 +724,13 @@ export default function ManualTherapyPage() {
             </button>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 text-sm text-slate-500 mr-4">
-            <span className="inline-block w-3 h-3 rounded bg-pink-100 border border-pink-200" /> 입원
-            <span className="inline-block w-3 h-3 rounded bg-green-100 border border-green-200 ml-2" /> 외래
-            <span className="inline-block w-3 h-3 rounded bg-yellow-50 border border-yellow-300 ml-2" /> 노쇼
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 text-xs text-slate-500">
+            <span className="inline-block w-3 h-3 rounded bg-yellow-100 border border-yellow-300" /> 입원
+            <span className="inline-block w-3 h-3 rounded bg-white border border-slate-300 ml-1" /> 외래
+            <span className="inline-block w-3 h-3 rounded bg-red-50 border border-red-200 ml-1" /> 노쇼
+            <span className="inline-block w-3 h-3 rounded bg-red-100 border border-red-300 ml-1" /> 취소
+            <span className="inline-block w-3 h-3 rounded bg-green-50 border border-green-200 ml-1" /> 완료
           </div>
           {currentStats && (
             <div className="flex items-center gap-1 text-xs bg-slate-100 rounded-lg px-3 py-1.5">
@@ -684,229 +746,84 @@ export default function ManualTherapyPage() {
         </div>
       </div>
 
-      {/* Monthly View - Simple Calendar */}
+      {/* Monthly View — 주차별 그리드 반복 */}
       {viewMode === 'monthly' && (
         <>
-          {/* Month Nav - always visible */}
           <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-2.5">
-            <button onClick={() => shiftMonth(-1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition">
-              <ChevronLeft size={20} />
-            </button>
+            <button onClick={() => shiftMonth(-1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><ChevronLeft size={20} /></button>
             <div className="flex items-center gap-3">
               <span className="font-semibold text-slate-800">{monthYear}년 {monthNum}월</span>
-              <button onClick={goThisMonth} className="text-xs px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100">
-                이번달
-              </button>
+              <button onClick={goThisMonth} className="text-xs px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100">이번달</button>
             </div>
-            <button onClick={() => shiftMonth(1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition">
-              <ChevronRight size={20} />
-            </button>
+            <button onClick={() => shiftMonth(1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><ChevronRight size={20} /></button>
           </div>
-
-          {!monthlyData && !loading && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-700">
-              API 서버에서 데이터를 불러올 수 없습니다. API 재배포가 필요할 수 있습니다.
-            </div>
-          )}
 
           {loading && !monthlyData && (
             <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm">로딩 중...</div></div>
           )}
 
-          {(() => {
-            const dayCounts: Record<string, number> = {};
-            if (monthlyData?.grid) {
-              for (const tId of Object.keys(monthlyData.grid)) {
-                for (const dateStr of Object.keys(monthlyData.grid[tId] || {})) {
-                  const cnt = Object.keys(monthlyData.grid[tId][dateStr] || {}).length;
-                  dayCounts[dateStr] = (dayCounts[dateStr] || 0) + cnt;
-                }
-              }
-            }
-            const calDays = getMonthCalendarDays(monthYear, monthNum);
-            const today = toDateStr(new Date());
-
+          {monthlyData && monthlyData.weeks.map((week, weekIdx) => {
+            const weekLabel = `${weekIdx + 1}주차 (${formatDate(week.start)}~${formatDate(week.end)})`;
             return (
-              <div className="bg-white rounded-lg border">
-                <div className="grid grid-cols-7 border-b">
-                  {['일', '월', '화', '수', '목', '금', '토'].map((d, i) => (
-                    <div key={d} className={`py-2 text-center text-xs font-semibold ${i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : 'text-slate-600'}`}>
-                      {d}
-                    </div>
-                  ))}
+              <div key={week.start} className="mb-2">
+                <div className="flex items-center justify-between px-3 py-1.5 bg-slate-100 rounded-t-lg border border-b-0 border-slate-200">
+                  <span className="text-sm font-semibold text-slate-700">{weekLabel}</span>
+                  <button onClick={() => navigateToWeek(week.start)} className="text-xs text-blue-600 hover:text-blue-700 hover:underline">
+                    주간 보기
+                  </button>
                 </div>
-                <div className="grid grid-cols-7">
-                  {calDays.map((day, i) => {
-                    if (!day) return <div key={`e-${i}`} className="p-2 min-h-[64px] border-b border-r border-slate-100 bg-slate-50/50" />;
-                    const dd = new Date(day + 'T00:00:00');
-                    const isToday = day === today;
-                    const count = dayCounts[day] || 0;
-                    const isSun = dd.getDay() === 0;
-                    const isSat = dd.getDay() === 6;
-
-                    return (
-                      <div
-                        key={day}
-                        onClick={() => navigateToWeek(day)}
-                        className={`p-2 min-h-[64px] border-b border-r border-slate-100 cursor-pointer hover:bg-blue-50/50 transition ${isToday ? 'bg-blue-50' : ''}`}
-                      >
-                        <div className={`text-xs font-semibold ${isToday ? 'text-blue-600' : isSun ? 'text-red-500' : isSat ? 'text-blue-500' : 'text-slate-700'}`}>
-                          {dd.getDate()}
-                        </div>
-                        {count > 0 && (
-                          <div className="mt-1 text-center">
-                            <span className="inline-block bg-blue-100 text-blue-700 text-xs font-bold px-2 py-0.5 rounded-full">
-                              {count}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                <div className="bg-white rounded-b-lg border overflow-x-auto">
+                  <WeeklyGrid
+                    weekDates={week.dates}
+                    therapists={monthlyData.therapists}
+                    timeSlots={monthlyData.timeSlots}
+                    grid={monthlyData.grid}
+                    compact
+                    onCellClick={openSlotModal}
+                  />
                 </div>
               </div>
             );
-          })()}
+          })}
         </>
       )}
 
       {/* Weekly View */}
       {viewMode === 'weekly' && (
-      <>
-      {/* Week Nav - always visible */}
-      <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-2.5">
-        <button
-          onClick={() => setWeekDate(shiftWeek(data ? week.start : weekDate, -1))}
-          className="p-1.5 rounded-lg hover:bg-slate-100 transition"
-        >
-          <ChevronLeft size={20} />
-        </button>
-        <div className="flex items-center gap-3">
-          <span className="font-semibold text-slate-800">
-            {data ? getWeekLabel(week.start, week.end) : `${weekDate} 주간`}
-          </span>
-          <button onClick={goToday} className="text-xs px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100">
-            오늘
-          </button>
-        </div>
-        <button
-          onClick={() => setWeekDate(shiftWeek(data ? week.start : weekDate, 1))}
-          className="p-1.5 rounded-lg hover:bg-slate-100 transition"
-        >
-          <ChevronRight size={20} />
-        </button>
-      </div>
+        <>
+          <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-2.5">
+            <button onClick={() => setWeekDate(shiftWeek(data ? week.start : weekDate, -1))} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><ChevronLeft size={20} /></button>
+            <div className="flex items-center gap-3">
+              <span className="font-semibold text-slate-800">{data ? getWeekLabel(week.start, week.end) : `${weekDate} 주간`}</span>
+              <button onClick={goToday} className="text-xs px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100">오늘</button>
+            </div>
+            <button onClick={() => setWeekDate(shiftWeek(data ? week.start : weekDate, 1))} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><ChevronRight size={20} /></button>
+          </div>
 
-      {!data && !loading && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-700">
-          API 서버에서 데이터를 불러올 수 없습니다. API 재배포가 필요할 수 있습니다.
-        </div>
-      )}
-
-      {loading && !data && (
-        <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm">로딩 중...</div></div>
-      )}
-      </>
+          {loading && !data && (
+            <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm">로딩 중...</div></div>
+          )}
+        </>
       )}
 
       {/* Weekly Grid */}
       {viewMode === 'weekly' && data && (
-      <>
-      {/* Grid */}
-      <div className="bg-white rounded-lg border overflow-x-auto">
-        <div className="min-w-[900px]">
-          {/* Header Row 1: Dates */}
-          <div className="grid border-b-2 border-slate-300" style={{ gridTemplateColumns: `46px repeat(${totalCols}, minmax(56px, 1fr))` }}>
-            <div className="px-1 py-1.5 text-[10px] font-semibold text-slate-500 border-r border-slate-200 flex items-center justify-center">
-              시간
-            </div>
-            {weekDates.map((date, idx) => {
-              const dayLabel = DAY_LABELS[idx];
-              const isSat = dayLabel === '토';
-              const isToday = date === toDateStr(new Date());
-
-              return (
-                <div
-                  key={date}
-                  className={`text-center border-r border-slate-200 last:border-r-0 ${isSat ? 'bg-blue-50/50' : ''}`}
-                  style={{ gridColumn: `span ${therapists.length}` }}
-                >
-                  <div
-                    className={`py-1 text-[10px] font-semibold border-b border-slate-200 ${
-                      isToday ? 'bg-blue-100 text-blue-700' : 'text-slate-700'
-                    }`}
-                  >
-                    {formatDate(date)}({dayLabel})
-                  </div>
-                  <div className="grid" style={{ gridTemplateColumns: `repeat(${therapists.length}, 1fr)` }}>
-                    {therapists.map((t) => (
-                      <div key={t.id} className="text-[10px] py-0.5 text-slate-500 border-r border-slate-100 last:border-r-0 truncate px-0.5">
-                        {t.name}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Time Rows */}
-          {timeSlots.map((ts) => (
-            <div
-              key={ts}
-              className="grid border-b border-slate-100 hover:bg-slate-50/50"
-              style={{ gridTemplateColumns: `46px repeat(${totalCols}, minmax(56px, 1fr))` }}
-            >
-              <div className="px-1 py-0.5 text-[10px] font-mono text-slate-500 border-r border-slate-200 flex items-center justify-center">
-                {ts}
-              </div>
-              {weekDates.map((date, idx) => {
-                const isSat = DAY_LABELS[idx] === '토';
-
-                return therapists.map((t) => {
-                  const slot = grid[t.id]?.[date]?.[ts] || null;
-
-                  return (
-                    <div
-                      key={`${t.id}-${date}-${ts}`}
-                      onClick={() => openSlotModal(t, date, ts, slot)}
-                      className={`px-0.5 py-0.5 border-r border-slate-100 last:border-r-0 cursor-pointer transition-colors min-h-[32px] ${
-                        slot
-                          ? `${PATIENT_TYPE_STYLES[slot.patientType] || ''} ${STATUS_STYLES[slot.status] || ''} border`
-                          : 'hover:bg-blue-50/50'
-                      } ${isSat ? 'bg-blue-50/30' : ''}`}
-                    >
-                      {slot && (
-                        <div className="text-[10px] leading-tight">
-                          <div className="font-medium text-slate-800 truncate">{slot.patientName}</div>
-                          <div className="flex items-center gap-0.5 flex-wrap">
-                            {slot.treatmentCodes?.map((code: string) => {
-                              const tc = TREATMENT_CODES.find((c) => c.code === code);
-                              return (
-                                <span key={code} className={`px-0.5 rounded text-[9px] leading-tight ${tc?.color || 'bg-slate-100 text-slate-500'}`}>
-                                  {code}
-                                </span>
-                              );
-                            })}
-                            {slot.sessionMarker && (
-                              <span className="px-0.5 rounded text-[9px] leading-tight bg-slate-200 text-slate-600">{slot.sessionMarker}</span>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                });
-              })}
-            </div>
-          ))}
-
-          {/* Remarks Row */}
-          <RemarkEditor remarks={remarks} weekDates={weekDates} accessToken={accessToken || ''} onUpdate={fetchData} />
+        <div className="bg-white rounded-lg border overflow-x-auto">
+          <WeeklyGrid
+            weekDates={weekDates}
+            therapists={therapists}
+            timeSlots={timeSlots}
+            grid={grid}
+            onCellClick={openSlotModal}
+          />
+          <RemarkEditor
+            remarks={remarks}
+            weekDates={weekDates}
+            therapistCount={therapists.length}
+            accessToken={accessToken || ''}
+            onUpdate={fetchData}
+          />
         </div>
-      </div>
-
-      </>
       )}
 
       {/* Modal */}

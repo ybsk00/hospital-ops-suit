@@ -409,8 +409,11 @@ model Doctor {
   updatedAt     DateTime      @updatedAt
   deletedAt     DateTime?
 
-  appointments Appointment[]
-  clinicRooms  ClinicRoom[]
+  appointments    Appointment[]
+  clinicRooms     ClinicRoom[]
+  rfScheduleSlots RfScheduleSlot[]           // Phase 정규화
+  handoverEntries HandoverEntry[]            // Phase 정규화
+  rfEvaluations   RfTreatmentEvaluation[]    // Phase 정규화
 }
 
 model ClinicRoom {
@@ -1039,15 +1042,14 @@ model ManualTherapySlot {
   id             String            @id @default(uuid())
   therapistId    String
   therapist      Therapist         @relation(fields: [therapistId], references: [id])
-  patientId      String?
-  patient        Patient?          @relation(fields: [patientId], references: [id])
+  patientId      String
+  patient        Patient           @relation(fields: [patientId], references: [id])
   date           DateTime          @db.Date
   timeSlot       String
   duration       Int               @default(30)
   treatmentCodes String[]
   sessionMarker  String?
   patientType    PatientType       @default(INPATIENT)
-  patientName    String?
   status         SlotStatus        @default(BOOKED)
   notes          String?
   source         AppointmentSource @default(INTERNAL)
@@ -1079,15 +1081,14 @@ model RfScheduleSlot {
   id            String            @id @default(uuid())
   roomId        String
   room          RfTreatmentRoom   @relation(fields: [roomId], references: [id])
-  patientId     String?
-  patient       Patient?          @relation(fields: [patientId], references: [id])
-  doctorCode    String
+  patientId     String
+  patient       Patient           @relation(fields: [patientId], references: [id])
+  doctorId      String
+  doctor        Doctor            @relation(fields: [doctorId], references: [id])
   date          DateTime          @db.Date
   startTime     String
   duration      Int
   patientType   PatientType       @default(INPATIENT)
-  patientName   String?
-  chartNumber   String?
   status        SlotStatus        @default(BOOKED)
   notes         String?
   source        AppointmentSource @default(INTERNAL)
@@ -1102,6 +1103,7 @@ model RfScheduleSlot {
   @@index([roomId, date])
   @@index([patientId, date])
   @@index([date, status])
+  @@index([doctorId])
 }
 
 // ── 직원 일일 메모 (비고, OFF 등) ──
@@ -1149,7 +1151,9 @@ model HandoverEntry {
   patient         Patient  @relation(fields: [patientId], references: [id])
   date            DateTime @db.Date
   roomNumber      String?              // 병실 번호
-  doctorCode      String?              // 담당의 코드 (J, C)
+  doctorCode      String?              // 담당의 코드 (J, C) — 하위호환
+  doctorId        String?              // Doctor FK (정규화)
+  doctor          Doctor?  @relation(fields: [doctorId], references: [id])
 
   // 당일 상태
   bloodDraw       Boolean  @default(false)
@@ -1181,7 +1185,6 @@ model RfTreatmentEvaluation {
   rfSlot          RfScheduleSlot? @relation(fields: [rfSlotId], references: [id])
   patientId       String
   patient         Patient     @relation(fields: [patientId], references: [id])
-  chartNumber     String?                          // 차트번호
   patientType     PatientType @default(INPATIENT)
   diagnosis       String?                          // 진단명
 
@@ -1194,7 +1197,9 @@ model RfTreatmentEvaluation {
 
   // 피드백
   patientIssue    String?     @db.Text             // 환자이슈/후기
-  doctorCode      String?                          // 담당의
+  doctorCode      String?                          // 담당의 코드 — 하위호환
+  doctorId        String?                          // Doctor FK (정규화)
+  doctor          Doctor?     @relation(fields: [doctorId], references: [id])
   roomNumber      String?                          // 방/기계번호
 
   evaluatedAt     DateTime    @default(now())
