@@ -93,6 +93,172 @@ router.get(
   }),
 );
 
+// ─── GET /api/admissions/reservations ── 입원예약 목록 ────────────
+// NOTE: /:id 보다 먼저 선언해야 라우트 충돌 방지
+router.get(
+  '/reservations',
+  requireAuth,
+  requirePermission('ADMISSIONS', 'READ'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { from, to } = req.query;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const fromDate = from ? new Date(from as string) : today;
+    const toDate = to ? new Date(to as string) : new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+    toDate.setHours(23, 59, 59, 999);
+
+    // 미래 입원예약 OR 아직 퇴원하지 않은 현재 입원
+    const reservations = await prisma.admission.findMany({
+      where: {
+        deletedAt: null,
+        admitDate: { gte: fromDate, lte: toDate },
+        status: { not: 'DISCHARGED' },
+      },
+      include: {
+        patient: {
+          select: { id: true, name: true, emrPatientId: true, dob: true, sex: true, phone: true },
+        },
+        currentBed: {
+          include: { room: { include: { ward: { select: { id: true, name: true } } } } },
+        },
+        attendingDoctor: { select: { id: true, name: true } },
+      },
+      orderBy: { admitDate: 'asc' },
+    });
+
+    // 미래 입원예약(isReservation=true OR admitDate > today)과 현재 재원 구분
+    const futureReservations = reservations.filter((a) => a.admitDate > today);
+    const currentAdmissions = reservations.filter((a) => a.admitDate <= today);
+
+    res.json({
+      success: true,
+      data: {
+        reservations: futureReservations,
+        currentAdmissions,
+        total: reservations.length,
+        futureCount: futureReservations.length,
+      },
+    });
+  }),
+);
+
+// ─── GET /api/admissions/bed-projection ── 병상 전망 ────────────────
+// NOTE: /:id 보다 먼저 선언해야 라우트 충돌 방지
+router.get(
+  '/bed-projection',
+  requireAuth,
+  requirePermission('ADMISSIONS', 'READ'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { from, to } = req.query;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const fromDate = from ? new Date(from as string) : today;
+    const toDate = to ? new Date(to as string) : new Date(today.getTime() + 6 * 24 * 60 * 60 * 1000);
+
+    // 전체 활성 베드 수
+    const totalBeds = await prisma.bed.count({
+      where: { deletedAt: null, isActive: true },
+    });
+
+    // 현재 재원 환자 (퇴원하지 않은)
+    const currentAdmissions = await prisma.admission.findMany({
+      where: {
+        deletedAt: null,
+        status: { not: 'DISCHARGED' },
+        admitDate: { lte: toDate },
+      },
+      include: {
+        patient: { select: { id: true, name: true } },
+        currentBed: {
+          include: { room: { select: { id: true, name: true } } },
+        },
+        attendingDoctor: { select: { id: true, name: true } },
+      },
+    });
+
+    // 날짜별 전망 계산
+    const days: Array<{
+      date: string;
+      inHospital: number;
+      admitting: number;
+      discharging: number;
+      available: number;
+      events: Array<{
+        type: 'ADMIT' | 'DISCHARGE';
+        patientName: string;
+        roomName: string | null;
+        bedLabel: string | null;
+        doctorName: string | null;
+      }>;
+    }> = [];
+
+    const d = new Date(fromDate);
+    while (d <= toDate) {
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const dayStart = new Date(dateStr + 'T00:00:00');
+      const dayEnd = new Date(dateStr + 'T23:59:59.999');
+
+      // 이 날 기준 재원 중인 환자 수
+      const inHospital = currentAdmissions.filter((a) => {
+        const admitted = a.admitDate <= dayEnd;
+        const notDischarged = !a.plannedDischargeDate || a.plannedDischargeDate > dayStart;
+        return admitted && notDischarged;
+      }).length;
+
+      // 이 날 입원 예정
+      const admitting = currentAdmissions.filter((a) => {
+        const ad = new Date(a.admitDate);
+        return ad >= dayStart && ad <= dayEnd;
+      });
+
+      // 이 날 퇴원 예정
+      const discharging = currentAdmissions.filter((a) => {
+        if (!a.plannedDischargeDate) return false;
+        const pd = new Date(a.plannedDischargeDate);
+        return pd >= dayStart && pd <= dayEnd;
+      });
+
+      const events: typeof days[0]['events'] = [];
+      for (const a of admitting) {
+        events.push({
+          type: 'ADMIT',
+          patientName: a.patient.name,
+          roomName: a.currentBed?.room?.name || null,
+          bedLabel: a.currentBed?.label || null,
+          doctorName: a.attendingDoctor?.name || null,
+        });
+      }
+      for (const a of discharging) {
+        events.push({
+          type: 'DISCHARGE',
+          patientName: a.patient.name,
+          roomName: a.currentBed?.room?.name || null,
+          bedLabel: a.currentBed?.label || null,
+          doctorName: a.attendingDoctor?.name || null,
+        });
+      }
+
+      days.push({
+        date: dateStr,
+        inHospital,
+        admitting: admitting.length,
+        discharging: discharging.length,
+        available: totalBeds - inHospital,
+        events,
+      });
+
+      d.setDate(d.getDate() + 1);
+    }
+
+    res.json({
+      success: true,
+      data: { totalBeds, days },
+    });
+  }),
+);
+
 // ─── GET /api/admissions/calendar ── 달력 뷰용 입원 조회 ────────────
 // NOTE: /:id 보다 먼저 선언해야 라우트 충돌 방지
 router.get(

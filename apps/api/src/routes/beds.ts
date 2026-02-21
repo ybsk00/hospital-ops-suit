@@ -353,6 +353,155 @@ router.delete(
   }),
 );
 
+// ─── GET /api/beds/projection ── 베드 주간 전망 ───
+router.get(
+  '/projection',
+  requireAuth,
+  requirePermission('BEDS', 'READ'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { from, to } = req.query;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const fromDate = from ? new Date(from as string) : today;
+    const toDate = to ? new Date(to as string) : new Date(today.getTime() + 6 * 24 * 60 * 60 * 1000);
+
+    // 날짜 배열 생성
+    const dates: string[] = [];
+    const d = new Date(fromDate);
+    while (d <= toDate) {
+      dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+      d.setDate(d.getDate() + 1);
+    }
+
+    // 병실+베드 전체 조회
+    const rooms = await prisma.room.findMany({
+      where: { deletedAt: null, isActive: true },
+      include: {
+        ward: { select: { id: true, name: true } },
+        beds: {
+          where: { deletedAt: null, isActive: true },
+          orderBy: { label: 'asc' },
+          include: {
+            currentAdmission: {
+              include: {
+                patient: { select: { id: true, name: true } },
+                attendingDoctor: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    // 미래 입원예약 (아직 입원하지 않은)
+    const futureAdmissions = await prisma.admission.findMany({
+      where: {
+        deletedAt: null,
+        status: { not: 'DISCHARGED' },
+        admitDate: { gte: fromDate, lte: toDate },
+      },
+      include: {
+        patient: { select: { id: true, name: true } },
+        currentBed: true,
+      },
+    });
+
+    // 병실별 베드별 날짜별 상태 계산
+    const result = rooms.map((room) => ({
+      roomName: room.name,
+      wardName: room.ward.name,
+      beds: room.beds.map((bed) => {
+        const admission = bed.currentAdmission || null;
+
+        const days = dates.map((dateStr) => {
+          const dayDate = new Date(dateStr + 'T00:00:00');
+
+          // 현재 입원이 있는 경우
+          if (admission) {
+            const admitDate = new Date(admission.admitDate);
+            const plannedDischarge = admission.plannedDischargeDate
+              ? new Date(admission.plannedDischargeDate)
+              : null;
+
+            // 퇴원 예정일인 경우
+            if (plannedDischarge) {
+              const pdStr = `${plannedDischarge.getFullYear()}-${String(plannedDischarge.getMonth() + 1).padStart(2, '0')}-${String(plannedDischarge.getDate()).padStart(2, '0')}`;
+              if (pdStr === dateStr) {
+                return {
+                  date: dateStr,
+                  status: 'DISCHARGE_SOON' as const,
+                  patientName: admission.patient.name,
+                  event: 'DISCHARGE' as const,
+                };
+              }
+            }
+
+            // 입원일인 경우
+            const adStr = `${admitDate.getFullYear()}-${String(admitDate.getMonth() + 1).padStart(2, '0')}-${String(admitDate.getDate()).padStart(2, '0')}`;
+            if (adStr === dateStr) {
+              return {
+                date: dateStr,
+                status: 'OCCUPIED' as const,
+                patientName: admission.patient.name,
+                event: 'ADMIT' as const,
+              };
+            }
+
+            // 재원 중
+            if (admitDate <= dayDate && (!plannedDischarge || plannedDischarge > dayDate)) {
+              return {
+                date: dateStr,
+                status: 'OCCUPIED' as const,
+                patientName: admission.patient.name,
+                event: null,
+              };
+            }
+          }
+
+          // 미래 예약이 있는 경우
+          const futureAdmission = futureAdmissions.find(
+            (fa) => fa.currentBedId === bed.id,
+          );
+          if (futureAdmission) {
+            const faDate = new Date(futureAdmission.admitDate);
+            const faStr = `${faDate.getFullYear()}-${String(faDate.getMonth() + 1).padStart(2, '0')}-${String(faDate.getDate()).padStart(2, '0')}`;
+            if (faStr === dateStr) {
+              return {
+                date: dateStr,
+                status: 'RESERVED' as const,
+                patientName: futureAdmission.patient.name,
+                event: 'ADMIT' as const,
+              };
+            }
+          }
+
+          // 빈 베드
+          return {
+            date: dateStr,
+            status: bed.status === 'OUT_OF_ORDER' ? ('OUT_OF_ORDER' as const) : ('EMPTY' as const),
+            patientName: null,
+            event: null,
+          };
+        });
+
+        return {
+          bedId: bed.id,
+          label: bed.label,
+          currentStatus: bed.status,
+          days,
+        };
+      }),
+    }));
+
+    res.json({
+      success: true,
+      data: { dates, rooms: result },
+    });
+  }),
+);
+
 // ─── PATCH /api/beds/:id/status ── 베드 상태 변경 ───
 router.patch(
   '/:id/status',

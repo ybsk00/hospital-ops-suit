@@ -234,4 +234,214 @@ router.get(
   }),
 );
 
+// ─── 날짜 문자열 헬퍼 ───
+function toDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Doctor → doctorCode 매핑
+const DOCTOR_CODE_MAP: Record<string, string> = {
+  'doc-changyong': 'C',
+  'doc-jaeil': 'J',
+};
+
+// =====================================================================
+// GET /api/dashboard/doctor-schedule?date= — 의사별 일정 통합 뷰
+// =====================================================================
+router.get(
+  '/doctor-schedule',
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const dateParam = (req.query.date as string) || toDateStr(new Date());
+    const targetDate = new Date(dateParam + 'T00:00:00');
+    const nextDate = new Date(targetDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+
+    // 의사 목록 조회
+    const doctors = await prisma.doctor.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+    });
+
+    // 5개 독립 쿼리 병렬 실행
+    const [admissions, appointments, rfSlots, manualSlots, procedures] = await Promise.all([
+      // 담당 입원환자
+      prisma.admission.findMany({
+        where: {
+          status: { in: ['ADMITTED', 'DISCHARGE_PLANNED', 'ON_LEAVE'] },
+          deletedAt: null,
+        },
+        include: {
+          patient: { select: { id: true, name: true, emrPatientId: true } },
+          currentBed: { include: { room: { select: { name: true } } } },
+        },
+      }),
+      // 외래예약
+      prisma.appointment.findMany({
+        where: {
+          startAt: { gte: targetDate, lt: nextDate },
+          status: { in: ['BOOKED', 'CHECKED_IN'] },
+          deletedAt: null,
+        },
+        include: {
+          patient: { select: { id: true, name: true } },
+          doctor: { select: { id: true, name: true } },
+        },
+        orderBy: { startAt: 'asc' },
+      }),
+      // 고주파 스케줄
+      prisma.rfScheduleSlot.findMany({
+        where: { date: targetDate, status: { not: 'CANCELLED' }, deletedAt: null },
+        include: {
+          patient: { select: { id: true, name: true } },
+          room: { select: { name: true } },
+        },
+      }),
+      // 도수치료 스케줄
+      prisma.manualTherapySlot.findMany({
+        where: { date: targetDate, status: { not: 'CANCELLED' }, deletedAt: null },
+        include: {
+          patient: { select: { id: true, name: true } },
+          therapist: { select: { name: true } },
+        },
+      }),
+      // 처치
+      prisma.procedureExecution.findMany({
+        where: {
+          scheduledAt: { gte: targetDate, lt: nextDate },
+          status: { in: ['SCHEDULED', 'IN_PROGRESS'] },
+          deletedAt: null,
+        },
+        include: {
+          plan: {
+            include: {
+              procedureCatalog: { select: { name: true, code: true } },
+              admission: {
+                include: { patient: { select: { id: true, name: true } } },
+              },
+            },
+          },
+        },
+      }),
+    ]);
+
+    // 의사별 담당환자 ID 세트
+    const doctorPatients: Record<string, Set<string>> = {};
+    for (const doc of doctors) {
+      doctorPatients[doc.id] = new Set();
+    }
+    for (const adm of admissions) {
+      for (const doc of doctors) {
+        if (adm.attendingDoctorId === doc.userId) {
+          doctorPatients[doc.id].add(adm.patient.id);
+        }
+      }
+    }
+
+    // 의사별 스케줄 빌드
+    const result = doctors.map((doc) => {
+      const doctorCode = DOCTOR_CODE_MAP[doc.id] || '';
+      const patientIds = doctorPatients[doc.id];
+      const schedules: any[] = [];
+
+      // 외래예약
+      for (const appt of appointments) {
+        if (appt.doctor.id === doc.id) {
+          const t = new Date(appt.startAt);
+          schedules.push({
+            time: `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`,
+            endTime: (() => { const e = new Date(appt.endAt); return `${String(e.getHours()).padStart(2, '0')}:${String(e.getMinutes()).padStart(2, '0')}`; })(),
+            type: 'APPOINTMENT',
+            patientName: appt.patient.name,
+            detail: appt.notes || '외래진료',
+            status: appt.status,
+          });
+        }
+      }
+
+      // 고주파 (doctorCode 매칭)
+      if (doctorCode) {
+        for (const rf of rfSlots) {
+          if (rf.doctorCode === doctorCode) {
+            schedules.push({
+              time: rf.startTime,
+              endTime: (() => {
+                const [h, m] = rf.startTime.split(':').map(Number);
+                const total = h * 60 + m + rf.duration;
+                return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+              })(),
+              type: 'RF',
+              patientName: rf.patientName || rf.patient?.name || '-',
+              detail: `고주파 ${rf.room.name} (${rf.duration}분)`,
+              status: rf.status,
+            });
+          }
+        }
+      }
+
+      // 도수치료 (담당환자의 도수)
+      for (const mt of manualSlots) {
+        if (mt.patientId && patientIds.has(mt.patientId)) {
+          const [h, m] = mt.timeSlot.split(':').map(Number);
+          const total = h * 60 + m + mt.duration;
+          schedules.push({
+            time: mt.timeSlot,
+            endTime: `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`,
+            type: 'MANUAL',
+            patientName: mt.patientName || mt.patient?.name || '-',
+            detail: `도수치료 (${mt.therapist.name})`,
+            status: mt.status,
+          });
+        }
+      }
+
+      // 처치 (담당환자의 처치)
+      for (const proc of procedures) {
+        const pid = proc.plan?.admission?.patient?.id;
+        if (pid && patientIds.has(pid)) {
+          const t = new Date(proc.scheduledAt);
+          schedules.push({
+            time: `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`,
+            endTime: '',
+            type: 'PROCEDURE',
+            patientName: proc.plan.admission.patient.name,
+            detail: proc.plan.procedureCatalog.name,
+            status: proc.status,
+          });
+        }
+      }
+
+      // 시간순 정렬
+      schedules.sort((a, b) => a.time.localeCompare(b.time));
+
+      // 담당 입원환자 목록
+      const inpatients = admissions
+        .filter((adm) => adm.attendingDoctorId === doc.userId)
+        .map((adm) => ({
+          patientId: adm.patient.id,
+          patientName: adm.patient.name,
+          chartNumber: adm.patient.emrPatientId,
+          roomName: adm.currentBed?.room?.name || '-',
+          bedLabel: adm.currentBed?.label || '-',
+          status: adm.status,
+        }));
+
+      return {
+        doctorId: doc.id,
+        doctorName: doc.name,
+        doctorCode,
+        userId: doc.userId,
+        schedules,
+        inpatientCount: inpatients.length,
+        appointmentCount: schedules.filter((s) => s.type === 'APPOINTMENT').length,
+        rfCount: schedules.filter((s) => s.type === 'RF').length,
+        manualCount: schedules.filter((s) => s.type === 'MANUAL').length,
+        inpatients,
+      };
+    });
+
+    res.json({ success: true, data: { date: dateParam, doctors: result } });
+  }),
+);
+
 export default router;

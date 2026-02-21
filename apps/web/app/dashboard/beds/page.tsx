@@ -15,6 +15,11 @@ import {
   Settings,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
+  LayoutGrid,
+  CalendarDays,
+  ArrowDown,
+  ArrowUp,
 } from 'lucide-react';
 
 interface Patient {
@@ -84,6 +89,38 @@ const statusLabels: Record<string, string> = {
   OUT_OF_ORDER: '사용불가',
 };
 
+type ViewMode = 'grid' | 'weekly';
+
+interface ProjectionBedDay {
+  date: string;
+  status: 'OCCUPIED' | 'RESERVED' | 'EMPTY' | 'DISCHARGE_SOON' | 'OUT_OF_ORDER';
+  patientName: string | null;
+  event: 'ADMIT' | 'DISCHARGE' | null;
+}
+
+interface ProjectionBed {
+  bedId: string;
+  label: string;
+  currentStatus: string;
+  days: ProjectionBedDay[];
+}
+
+interface ProjectionRoom {
+  roomName: string;
+  wardName: string;
+  beds: ProjectionBed[];
+}
+
+function toDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function formatDateKR(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00');
+  const weekday = ['일', '월', '화', '수', '목', '금', '토'][d.getDay()];
+  return `${d.getMonth() + 1}/${d.getDate()}(${weekday})`;
+}
+
 export default function BedsPage() {
   const { accessToken } = useAuthStore();
   const [wards, setWards] = useState<Ward[]>([]);
@@ -91,6 +128,13 @@ export default function BedsPage() {
   const [loading, setLoading] = useState(true);
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('');
+
+  // 뷰 모드
+  const [viewMode, setViewMode] = useState<ViewMode>('grid');
+  const [projectionDate, setProjectionDate] = useState(() => toDateStr(new Date()));
+  const [projectionRooms, setProjectionRooms] = useState<ProjectionRoom[]>([]);
+  const [projectionDates, setProjectionDates] = useState<string[]>([]);
+  const [projectionLoading, setProjectionLoading] = useState(false);
 
   // 관리 모드
   const [showManagement, setShowManagement] = useState(false);
@@ -128,6 +172,47 @@ export default function BedsPage() {
   useEffect(() => {
     fetchBeds();
   }, [fetchBeds]);
+
+  // 주간 전망 로드
+  const fetchProjection = useCallback(async () => {
+    if (!accessToken) return;
+    setProjectionLoading(true);
+    try {
+      const d = new Date(projectionDate + 'T00:00:00');
+      const day = d.getDay();
+      const monday = new Date(d);
+      monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+
+      const from = toDateStr(monday);
+      const to = toDateStr(sunday);
+
+      const res = await api<{ dates: string[]; rooms: ProjectionRoom[] }>(
+        `/api/beds/projection?from=${from}&to=${to}`,
+        { token: accessToken },
+      );
+      if (res.data) {
+        setProjectionDates(res.data.dates);
+        setProjectionRooms(res.data.rooms);
+      }
+    } catch { /* ignore */ }
+    setProjectionLoading(false);
+  }, [accessToken, projectionDate]);
+
+  useEffect(() => {
+    if (viewMode === 'weekly') {
+      fetchProjection();
+    }
+  }, [viewMode, fetchProjection]);
+
+  const moveWeek = (delta: number) => {
+    const d = new Date(projectionDate + 'T00:00:00');
+    d.setDate(d.getDate() + delta * 7);
+    setProjectionDate(toDateStr(d));
+  };
+
+  const todayStr = toDateStr(new Date());
 
   async function handleStatusChange(bed: Bed, newStatus: string) {
     if (!accessToken) return;
@@ -254,27 +339,202 @@ export default function BedsPage() {
           <p className="text-slate-500 mt-1">병동별 베드 현황을 확인하고 관리합니다.</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowManagement(!showManagement)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition text-sm font-medium ${
-              showManagement
-                ? 'bg-blue-600 text-white'
-                : 'bg-white border border-slate-300 hover:bg-slate-50'
-            }`}
-          >
-            <Settings size={16} />
-            관리
-          </button>
-          <button
-            onClick={fetchBeds}
-            className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition text-sm"
-          >
-            <RefreshCw size={16} />
-            새로고침
-          </button>
+          {/* 뷰 모드 탭 */}
+          <div className="flex bg-gray-100 rounded-lg p-0.5">
+            <button
+              onClick={() => setViewMode('grid')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition ${
+                viewMode === 'grid'
+                  ? 'bg-white text-blue-700 shadow-sm font-medium'
+                  : 'text-gray-600 hover:text-gray-800'
+              }`}
+            >
+              <LayoutGrid size={14} />
+              그리드
+            </button>
+            <button
+              onClick={() => setViewMode('weekly')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition ${
+                viewMode === 'weekly'
+                  ? 'bg-white text-blue-700 shadow-sm font-medium'
+                  : 'text-gray-600 hover:text-gray-800'
+              }`}
+            >
+              <CalendarDays size={14} />
+              주간전망
+            </button>
+          </div>
+
+          {viewMode === 'grid' && (
+            <>
+              <button
+                onClick={() => setShowManagement(!showManagement)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition text-sm font-medium ${
+                  showManagement
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white border border-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                <Settings size={16} />
+                관리
+              </button>
+              <button
+                onClick={fetchBeds}
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition text-sm"
+              >
+                <RefreshCw size={16} />
+                새로고침
+              </button>
+            </>
+          )}
         </div>
       </div>
 
+      {/* ───── 주간 전망 뷰 ───── */}
+      {viewMode === 'weekly' && (
+        <>
+          {/* 날짜 네비게이션 */}
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2">
+              <button onClick={() => moveWeek(-1)} className="p-2 rounded-lg hover:bg-gray-100">
+                <ChevronLeft size={18} />
+              </button>
+              <button
+                onClick={() => setProjectionDate(toDateStr(new Date()))}
+                className="px-3 py-1.5 text-sm bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 font-medium"
+              >
+                이번 주
+              </button>
+              <span className="text-lg font-semibold text-gray-800 min-w-[200px] text-center">
+                {projectionDates.length > 0 && (
+                  <>
+                    {formatDateKR(projectionDates[0])} ~ {formatDateKR(projectionDates[projectionDates.length - 1])}
+                  </>
+                )}
+              </span>
+              <button onClick={() => moveWeek(1)} className="p-2 rounded-lg hover:bg-gray-100">
+                <ChevronRight size={18} />
+              </button>
+            </div>
+          </div>
+
+          {projectionLoading && <div className="text-center py-12 text-gray-400">불러오는 중...</div>}
+
+          {!projectionLoading && projectionRooms.length > 0 && (
+            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 border-b">
+                      <th className="px-3 py-2.5 text-left font-semibold text-gray-600 w-32 sticky left-0 bg-gray-50 z-10">
+                        병실/베드
+                      </th>
+                      {projectionDates.map((dateStr) => {
+                        const isToday = dateStr === todayStr;
+                        const isWeekend = (() => {
+                          const dd = new Date(dateStr + 'T00:00:00');
+                          return dd.getDay() === 0 || dd.getDay() === 6;
+                        })();
+                        return (
+                          <th
+                            key={dateStr}
+                            className={`px-2 py-2.5 text-center font-semibold min-w-[110px] ${
+                              isToday ? 'bg-blue-50 text-blue-700' : isWeekend ? 'text-red-500' : 'text-gray-600'
+                            }`}
+                          >
+                            {formatDateKR(dateStr)}
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {projectionRooms.map((room) => (
+                      <>
+                        {room.beds.map((bed, bedIdx) => (
+                          <tr key={bed.bedId} className="border-b hover:bg-gray-50/50">
+                            <td className="px-3 py-1.5 sticky left-0 bg-white z-10">
+                              {bedIdx === 0 ? (
+                                <div>
+                                  <span className="font-semibold text-gray-800">{room.roomName}</span>
+                                  <span className="text-xs text-gray-400 ml-1">{bed.label}</span>
+                                </div>
+                              ) : (
+                                <div className="pl-3">
+                                  <span className="text-xs text-gray-400">{bed.label}</span>
+                                </div>
+                              )}
+                            </td>
+                            {bed.days.map((day) => {
+                              const isToday = day.date === todayStr;
+                              return (
+                                <td
+                                  key={day.date}
+                                  className={`px-1.5 py-1 text-center ${isToday ? 'bg-blue-50/50' : ''}`}
+                                >
+                                  {day.status === 'OCCUPIED' || day.status === 'DISCHARGE_SOON' ? (
+                                    <div
+                                      className={`px-1.5 py-1 rounded text-xs ${
+                                        day.status === 'DISCHARGE_SOON'
+                                          ? 'bg-orange-50 border border-orange-200'
+                                          : 'bg-blue-50 border border-blue-200'
+                                      }`}
+                                    >
+                                      <div className="font-medium text-gray-700 truncate">{day.patientName}</div>
+                                      {day.event === 'ADMIT' && (
+                                        <div className="flex items-center justify-center gap-0.5 text-emerald-600">
+                                          <ArrowDown size={10} />
+                                          <span className="text-[10px]">입원</span>
+                                        </div>
+                                      )}
+                                      {day.event === 'DISCHARGE' && (
+                                        <div className="flex items-center justify-center gap-0.5 text-orange-600">
+                                          <ArrowUp size={10} />
+                                          <span className="text-[10px]">퇴원</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : day.status === 'RESERVED' ? (
+                                    <div className="px-1.5 py-1 rounded text-xs bg-yellow-50 border border-yellow-200">
+                                      <div className="font-medium text-yellow-700 truncate">{day.patientName}</div>
+                                      <div className="flex items-center justify-center gap-0.5 text-yellow-600">
+                                        <ArrowDown size={10} />
+                                        <span className="text-[10px]">예약</span>
+                                      </div>
+                                    </div>
+                                  ) : day.status === 'OUT_OF_ORDER' ? (
+                                    <div className="px-1.5 py-1 rounded text-xs bg-gray-100 text-gray-400">
+                                      사용불가
+                                    </div>
+                                  ) : (
+                                    <div className="px-1.5 py-1 rounded text-xs text-gray-300">
+                                      -
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {!projectionLoading && projectionRooms.length === 0 && (
+            <div className="text-center py-12 bg-white rounded-xl border border-gray-200 text-gray-400">
+              베드 데이터가 없습니다.
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ───── 그리드 뷰 ───── */}
+      {viewMode === 'grid' && (
+      <>
       {/* Management Panel */}
       {showManagement && (
         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4 mb-6">
@@ -451,6 +711,9 @@ export default function BedsPage() {
             </button>
           )}
         </div>
+      )}
+
+      </>
       )}
 
       {/* Bed Detail Modal */}

@@ -6,9 +6,9 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
   BedDouble,
-  // UserPlus,       // 입원관리 - 주석처리 (중복)
+  UserPlus,
   // Syringe,        // 입원환자치료 - 주석처리 (중복)
-  // CalendarClock,  // 외래예약 - 주석처리 (미구현)
+  CalendarClock,
   // Home,           // 가정방문 - 주석처리 (미구현)
   Inbox,
   Upload,
@@ -54,6 +54,7 @@ const navGroups: NavGroup[] = [
     items: [
       { href: '/dashboard/beds', label: '베드관리', icon: BedDouble },
       { href: '/dashboard/room-booking', label: '병실현황', icon: DoorOpen },
+      { href: '/dashboard/admission-reservation', label: '입원예약', icon: UserPlus },
       { href: '/dashboard/handover', label: '인계장', icon: ClipboardList },
     ],
   },
@@ -62,6 +63,7 @@ const navGroups: NavGroup[] = [
     label: '치료관리',
     icon: Stethoscope,
     items: [
+      { href: '/dashboard/doctor-schedule', label: '의사별일정', icon: CalendarClock },
       { href: '/dashboard/rf-evaluation', label: '고주파현황', icon: FileCheck },
       { href: '/dashboard/scheduling/manual-therapy', label: '도수현황', icon: Hand },
       { href: '/dashboard/scheduling/rf-schedule', label: '고주파예약', icon: Zap },
