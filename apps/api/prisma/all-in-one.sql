@@ -586,7 +586,6 @@ ON CONFLICT ("code") DO NOTHING;
 --   homecare1/ homecare1234
 INSERT INTO "User" ("id", "loginId", "passwordHash", "name", "isSuperAdmin") VALUES
   ('user-admin',    'admin',     '$2a$12$/11kIfmRHSBn2Pn1RCo4lu4hDCJHgUTSjiPi9V.JqAHUkI46jhOG.', '시스템관리자', true),
-  ('user-doctor1',  'doctor1',   '$2a$12$ScVwfqPDOrNRXr4Ey8lyiOAgqLWjWIvqnUn41ZDMzU1DDW8OH6FgO', '김의사',       false),
   ('user-nurse1',   'nurse1',    '$2a$12$eXPgWkTn8eUQQwsMwQdYX.1JxQazHxet5c8u.N1CsOT05AEynnF7q', '이간호사',     false),
   ('user-staff1',   'staff1',    '$2a$12$jD89mAocgUYkjVtNvg..5OYaCvfb764aTiwc/eyaPJ9HtKxzXpiuK', '박직원',       false),
   ('user-homecare1','homecare1', '$2a$12$lO8YwbLXPlNzx0loqahxxuqCceNPfo/fqFWRPVj4EvQtSqMJtU1Vq', '최방문',       false)
@@ -594,7 +593,6 @@ ON CONFLICT ("loginId") DO NOTHING;
 
 -- 5-3. 사용자-부서 배정 (UserDepartment)
 INSERT INTO "UserDepartment" ("userId", "departmentId", "role", "isPrimary") VALUES
-  ('user-doctor1',   'dept-medical',   'DOCTOR',         true),
   ('user-nurse1',    'dept-nursing',   'HEAD_NURSE',     true),
   ('user-staff1',    'dept-admin',     'STAFF',          true),
   ('user-homecare1', 'dept-homecare',  'HOMECARE_STAFF', true)
@@ -712,14 +710,11 @@ INSERT INTO "ProcedureCatalog" ("name", "category", "defaultUnitPrice") VALUES
   ('물리치료',  '재활', 20000)
 ON CONFLICT ("name") DO NOTHING;
 
--- 5-7. 의사 마스터 (Doctor)
-INSERT INTO "Doctor" ("id", "userId", "name", "specialty") VALUES
-  ('doc-kim', 'user-doctor1', '김의사', '내과')
-ON CONFLICT DO NOTHING;
+-- 5-7. 의사 마스터 (Doctor) - 실제 의사는 별도 마이그레이션으로 추가
 
 -- 5-8. 진료실 (ClinicRoom)
-INSERT INTO "ClinicRoom" ("id", "name", "doctorId") VALUES
-  ('clinic-1', '1진료실', 'doc-kim')
+INSERT INTO "ClinicRoom" ("id", "name") VALUES
+  ('clinic-1', '1진료실')
 ON CONFLICT ("name") DO NOTHING;
 
 -- ============================================================

@@ -25,7 +25,6 @@ ON CONFLICT ("code") DO NOTHING;
 -- ──────────────────────────────────────────────
 INSERT INTO "User" ("id", "loginId", "passwordHash", "name", "isSuperAdmin") VALUES
   ('user-admin',    'admin',     '$2a$12$/11kIfmRHSBn2Pn1RCo4lu4hDCJHgUTSjiPi9V.JqAHUkI46jhOG.', '시스템관리자', true),
-  ('user-doctor1',  'doctor1',   '$2a$12$ScVwfqPDOrNRXr4Ey8lyiOAgqLWjWIvqnUn41ZDMzU1DDW8OH6FgO', '김의사',       false),
   ('user-nurse1',   'nurse1',    '$2a$12$eXPgWkTn8eUQQwsMwQdYX.1JxQazHxet5c8u.N1CsOT05AEynnF7q', '이간호사',     false),
   ('user-staff1',   'staff1',    '$2a$12$jD89mAocgUYkjVtNvg..5OYaCvfb764aTiwc/eyaPJ9HtKxzXpiuK', '박직원',       false),
   ('user-homecare1','homecare1', '$2a$12$lO8YwbLXPlNzx0loqahxxuqCceNPfo/fqFWRPVj4EvQtSqMJtU1Vq', '최방문',       false)
@@ -35,7 +34,6 @@ ON CONFLICT ("loginId") DO NOTHING;
 -- 3. 사용자-부서 배정 (UserDepartment)
 -- ──────────────────────────────────────────────
 INSERT INTO "UserDepartment" ("userId", "departmentId", "role", "isPrimary") VALUES
-  ('user-doctor1',   'dept-medical',   'DOCTOR',         true),
   ('user-nurse1',    'dept-nursing',   'HEAD_NURSE',     true),
   ('user-staff1',    'dept-admin',     'STAFF',          true),
   ('user-homecare1', 'dept-homecare',  'HOMECARE_STAFF', true)
@@ -175,17 +173,14 @@ INSERT INTO "ProcedureCatalog" ("name", "code", "category", "defaultDuration", "
 ON CONFLICT ("name") DO NOTHING;
 
 -- ──────────────────────────────────────────────
--- 7. 의사 마스터 (Doctor)
+-- 7. 의사 마스터 (Doctor) - 실제 의사는 별도 마이그레이션으로 추가
 -- ──────────────────────────────────────────────
-INSERT INTO "Doctor" ("id", "userId", "name", "specialty") VALUES
-  ('doc-kim', 'user-doctor1', '김의사', '내과')
-ON CONFLICT DO NOTHING;
 
 -- ──────────────────────────────────────────────
 -- 8. 진료실 (ClinicRoom)
 -- ──────────────────────────────────────────────
-INSERT INTO "ClinicRoom" ("id", "name", "doctorId") VALUES
-  ('clinic-1', '1진료실', 'doc-kim')
+INSERT INTO "ClinicRoom" ("id", "name") VALUES
+  ('clinic-1', '1진료실')
 ON CONFLICT ("name") DO NOTHING;
 
 -- ──────────────────────────────────────────────
@@ -202,10 +197,4 @@ ON CONFLICT ("emrPatientId") DO NOTHING;
 -- ──────────────────────────────────────────────
 -- 10. 테스트 외래예약 (Appointment) - 오늘 날짜 기준
 -- ──────────────────────────────────────────────
-INSERT INTO "Appointment" ("id", "patientId", "doctorId", "clinicRoomId", "startAt", "endAt", "status", "source", "notes") VALUES
-  ('apt-1', 'patient-1', 'doc-kim', 'clinic-1', CURRENT_DATE + TIME '09:00', CURRENT_DATE + TIME '09:30', 'BOOKED',     'INTERNAL', '정기 검진'),
-  ('apt-2', 'patient-2', 'doc-kim', 'clinic-1', CURRENT_DATE + TIME '09:30', CURRENT_DATE + TIME '10:00', 'BOOKED',     'INTERNAL', '혈압 관리'),
-  ('apt-3', 'patient-3', 'doc-kim', 'clinic-1', CURRENT_DATE + TIME '10:00', CURRENT_DATE + TIME '10:30', 'CHECKED_IN', 'INTERNAL', NULL),
-  ('apt-4', 'patient-4', 'doc-kim', 'clinic-1', CURRENT_DATE + TIME '10:30', CURRENT_DATE + TIME '11:00', 'BOOKED',     'EMR', '당뇨 경과 관찰'),
-  ('apt-5', 'patient-5', 'doc-kim', 'clinic-1', CURRENT_DATE + TIME '14:00', CURRENT_DATE + TIME '14:30', 'BOOKED',     'INTERNAL', '재활 상담')
-ON CONFLICT DO NOTHING;
+-- 테스트 외래예약은 실제 의사(이찬용/이재일)로 별도 마이그레이션에서 추가됨

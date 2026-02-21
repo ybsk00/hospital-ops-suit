@@ -64,14 +64,6 @@ const users: UserSeed[] = [
     isSuperAdmin: true,
   },
   {
-    loginId: 'doctor1',
-    password: 'doctor1234',
-    name: '김의사',
-    isSuperAdmin: false,
-    departmentCode: 'MEDICAL',
-    role: 'DOCTOR' as UserRole,
-  },
-  {
     loginId: 'nurse1',
     password: 'nurse1234',
     name: '이간호사',
