@@ -339,6 +339,171 @@ router.post(
   }),
 );
 
+// ─── GET /api/marketing/chat-logs ── 환자 챗봇 대화 로그 ───
+router.get(
+  '/chat-logs',
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { page = '1', limit = '20', from, to, category, search, hasBooking } = req.query;
+    const pageNum = Math.max(1, parseInt(page as string) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 20));
+
+    const fromDate = from ? new Date(from as string) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const toDate = to ? new Date(to as string) : new Date();
+
+    // 세션 필터 조건
+    const sessionWhere: any = {
+      createdAt: { gte: fromDate, lte: toDate },
+    };
+
+    // 카테고리 필터: 해당 카테고리 메시지가 있는 세션만
+    if (category && category !== 'all') {
+      sessionWhere.messages = {
+        some: { category: category as string },
+      };
+    }
+
+    // 검색 필터: 메시지 내용에 검색어가 포함된 세션만
+    if (search) {
+      sessionWhere.messages = {
+        ...sessionWhere.messages,
+        some: {
+          ...sessionWhere.messages?.some,
+          content: { contains: search as string, mode: 'insensitive' },
+        },
+      };
+    }
+
+    const [sessions, total] = await Promise.all([
+      prisma.patientChatSession.findMany({
+        where: sessionWhere,
+        orderBy: { createdAt: 'desc' },
+        skip: (pageNum - 1) * limitNum,
+        take: limitNum,
+        include: {
+          messages: {
+            orderBy: { createdAt: 'asc' },
+            select: {
+              id: true,
+              role: true,
+              content: true,
+              category: true,
+              metadata: true,
+              createdAt: true,
+            },
+          },
+        },
+      }),
+      prisma.patientChatSession.count({ where: sessionWhere }),
+    ]);
+
+    // ChatbotAnalytics 데이터 병합
+    const sessionIds = sessions.map(s => s.id);
+    const analyticsData = sessionIds.length > 0
+      ? await prisma.chatbotAnalytics.findMany({
+          where: { sessionId: { in: sessionIds } },
+          select: { sessionId: true, isBooking: true, responseTime: true, category: true, isFallback: true },
+        })
+      : [];
+
+    const analyticsMap = new Map<string, typeof analyticsData>();
+    for (const a of analyticsData) {
+      if (!a.sessionId) continue;
+      const arr = analyticsMap.get(a.sessionId) || [];
+      arr.push(a);
+      analyticsMap.set(a.sessionId, arr);
+    }
+
+    const result = sessions.map(session => {
+      const analytics = analyticsMap.get(session.id) || [];
+      const userMessages = session.messages.filter(m => m.role === 'user');
+      const categories = [...new Set(session.messages.filter(m => m.category).map(m => m.category))];
+      const hasBookingIntent = analytics.some(a => a.isBooking);
+      const avgResponseTime = analytics.length > 0
+        ? Math.round(analytics.reduce((sum, a) => sum + (a.responseTime || 0), 0) / analytics.length)
+        : null;
+
+      return {
+        id: session.id,
+        ipHash: session.ipHash,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        messageCount: session.messages.length,
+        firstQuery: userMessages[0]?.content?.substring(0, 100) || '',
+        lastQuery: userMessages[userMessages.length - 1]?.content?.substring(0, 100) || '',
+        categories,
+        hasBookingIntent,
+        avgResponseTime,
+      };
+    });
+
+    // 예약의사 필터 (후처리)
+    const filtered = hasBooking === 'true'
+      ? result.filter(s => s.hasBookingIntent)
+      : result;
+
+    res.json({
+      success: true,
+      data: {
+        sessions: filtered,
+        total: hasBooking === 'true' ? filtered.length : total,
+        page: pageNum,
+        limit: limitNum,
+      },
+    });
+  }),
+);
+
+// ─── GET /api/marketing/chat-logs/:sessionId ── 세션 상세 ───
+router.get(
+  '/chat-logs/:sessionId',
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { sessionId } = req.params;
+
+    const session = await prisma.patientChatSession.findUnique({
+      where: { id: sessionId },
+      include: {
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            role: true,
+            content: true,
+            category: true,
+            metadata: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    if (!session) {
+      throw new AppError(404, 'NOT_FOUND', '세션을 찾을 수 없습니다.');
+    }
+
+    const analytics = await prisma.chatbotAnalytics.findMany({
+      where: { sessionId },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        query: true,
+        category: true,
+        responseTime: true,
+        hadSources: true,
+        isBooking: true,
+        isFallback: true,
+        createdAt: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: { session, analytics },
+    });
+  }),
+);
+
 // ─── GET /api/marketing/stats ── 콘텐츠 현황 ───
 router.get(
   '/stats',

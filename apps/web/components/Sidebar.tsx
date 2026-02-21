@@ -85,6 +85,7 @@ const navGroups: NavGroup[] = [
       { href: '/dashboard/marketing', label: '마케팅관리', icon: Megaphone },
       { href: '/dashboard/marketing/chatbot', label: '챗봇콘텐츠', icon: MessageCircle },
       { href: '/dashboard/marketing/analytics', label: '챗봇통계', icon: BarChart3 },
+      { href: '/dashboard/marketing/chat-logs', label: '대화로그', icon: ScrollText },
     ],
   },
   {
