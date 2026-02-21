@@ -173,8 +173,16 @@ INSERT INTO "ProcedureCatalog" ("name", "code", "category", "defaultDuration", "
 ON CONFLICT ("name") DO NOTHING;
 
 -- ──────────────────────────────────────────────
--- 7. 의사 마스터 (Doctor) - 실제 의사는 별도 마이그레이션으로 추가
+-- 7. 의사 마스터 (Doctor) + 일정
 -- ──────────────────────────────────────────────
+INSERT INTO "Doctor" ("id", "userId", "name", "specialty", "doctorCode", "workDays", "workStartTime", "workEndTime") VALUES
+  ('doc-changyong', 'user-doctor-changyong', '이찬용', '내과', 'C', '{1,2,3,4,5,6}', '09:00', '18:00'),
+  ('doc-jaeil',     'user-doctor-jaeil',     '이재일', '내과', 'J', '{1,2,3,4,5}',   '09:00', '18:00')
+ON CONFLICT ("id") DO UPDATE SET
+  "doctorCode" = EXCLUDED."doctorCode",
+  "workDays" = EXCLUDED."workDays",
+  "workStartTime" = EXCLUDED."workStartTime",
+  "workEndTime" = EXCLUDED."workEndTime";
 
 -- ──────────────────────────────────────────────
 -- 8. 진료실 (ClinicRoom)

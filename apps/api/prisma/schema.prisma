@@ -395,15 +395,19 @@ enum ProcedureFrequency {
 }
 
 model Doctor {
-  id          String        @id @default(uuid())
-  userId      String?
-  emrDoctorId String?       @unique
-  name        String
-  specialty   String?
-  isActive    Boolean       @default(true)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  deletedAt   DateTime?
+  id            String        @id @default(uuid())
+  userId        String?
+  emrDoctorId   String?       @unique
+  name          String
+  specialty     String?
+  doctorCode    String?       @unique
+  workDays      Int[]         @default([1, 2, 3, 4, 5])
+  workStartTime String        @default("09:00")
+  workEndTime   String        @default("18:00")
+  isActive      Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
 
   appointments Appointment[]
   clinicRooms  ClinicRoom[]

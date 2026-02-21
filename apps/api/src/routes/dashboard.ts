@@ -239,11 +239,7 @@ function toDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-// Doctor → doctorCode 매핑
-const DOCTOR_CODE_MAP: Record<string, string> = {
-  'doc-changyong': 'C',
-  'doc-jaeil': 'J',
-};
+// Doctor.doctorCode 필드에서 직접 조회 (DB 기반)
 
 // =====================================================================
 // GET /api/dashboard/doctor-schedule?date= — 의사별 일정 통합 뷰
@@ -340,7 +336,7 @@ router.get(
 
     // 의사별 스케줄 빌드
     const result = doctors.map((doc) => {
-      const doctorCode = DOCTOR_CODE_MAP[doc.id] || '';
+      const doctorCode = doc.doctorCode || '';
       const patientIds = doctorPatients[doc.id];
       const schedules: any[] = [];
 

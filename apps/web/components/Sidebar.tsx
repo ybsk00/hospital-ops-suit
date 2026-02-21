@@ -9,6 +9,7 @@ import {
   UserPlus,
   // Syringe,        // 입원환자치료 - 주석처리 (중복)
   CalendarClock,
+  Calendar,
   // Home,           // 가정방문 - 주석처리 (미구현)
   Inbox,
   Upload,
@@ -64,9 +65,10 @@ const navGroups: NavGroup[] = [
     icon: Stethoscope,
     items: [
       { href: '/dashboard/doctor-schedule', label: '의사별일정', icon: CalendarClock },
+      { href: '/dashboard/appointments', label: '외래관리', icon: Calendar },
       { href: '/dashboard/rf-evaluation', label: '고주파현황', icon: FileCheck },
-      { href: '/dashboard/scheduling/manual-therapy', label: '도수현황', icon: Hand },
-      { href: '/dashboard/scheduling/rf-schedule', label: '고주파예약', icon: Zap },
+      { href: '/dashboard/scheduling/manual-therapy', label: '도수예약현황', icon: Hand },
+      { href: '/dashboard/scheduling/rf-schedule', label: '고주파예약현황', icon: Zap },
     ],
   },
   {
@@ -105,7 +107,6 @@ const navGroups: NavGroup[] = [
 /* 주석처리 메뉴 (중복/미구현)
   { href: '/dashboard/admissions', label: '입원 관리', icon: UserPlus },      // 중복 - 베드관리+병실현황으로 대체
   { href: '/dashboard/procedures', label: '입원환자치료', icon: Syringe },    // 중복 - 치료관리로 통합
-  { href: '/dashboard/appointments', label: '외래 예약', icon: CalendarClock }, // 미구현
   { href: '/dashboard/homecare', label: '가정방문', icon: Home },              // 미구현
 */
 
