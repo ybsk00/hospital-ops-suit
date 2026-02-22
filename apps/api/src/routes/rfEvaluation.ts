@@ -212,7 +212,8 @@ router.get(
   '/round-prep',
   requireAuth,
   asyncHandler(async (req: Request, res: Response) => {
-    const dateParam = (req.query.date as string) || toDateStr(new Date());
+    const dateParam = req.query.date as string;
+    if (!dateParam) throw new AppError(400, 'INVALID_REQUEST', 'date 파라미터가 필요합니다.');
     const doctor = req.query.doctor as string;
     const targetDate = new Date(dateParam + 'T00:00:00');
 
@@ -235,22 +236,27 @@ router.get(
       orderBy: { startTime: 'asc' },
     });
 
-    // 각 환자별 최근 3회 치료 평가
+    // 각 환자별 최근 3회 치료 평가 — IN 쿼리로 N+1 제거
     const patientIds = [...new Set(rfSlots.map((s) => s.patientId).filter(Boolean))] as string[];
     const recentEvals: Record<string, any[]> = {};
 
-    for (const pid of patientIds) {
-      const evals = await prisma.rfTreatmentEvaluation.findMany({
-        where: { patientId: pid, deletedAt: null },
+    if (patientIds.length > 0) {
+      const allEvals = await prisma.rfTreatmentEvaluation.findMany({
+        where: { patientId: { in: patientIds }, deletedAt: null },
         orderBy: { evaluatedAt: 'desc' },
-        take: 3,
         select: {
-          id: true, evaluatedAt: true, probeType: true,
+          id: true, patientId: true, evaluatedAt: true, probeType: true,
           outputPercent: true, temperature: true, treatmentTime: true,
           patientIssue: true, roomNumber: true,
         },
       });
-      recentEvals[pid] = evals;
+      // 환자별로 최대 3건씩 수집 (이미 desc 정렬됨)
+      for (const e of allEvals) {
+        if (!recentEvals[e.patientId]) recentEvals[e.patientId] = [];
+        if (recentEvals[e.patientId].length < 3) {
+          recentEvals[e.patientId].push(e);
+        }
+      }
     }
 
     // 추천 회진 시간 계산 (환자 치료 시작-종료 범위)
@@ -259,7 +265,7 @@ router.get(
     for (const s of rfSlots) {
       if (s.startTime < earliestTime) earliestTime = s.startTime;
       const endMinutes = parseInt(s.startTime.split(':')[0]) * 60
-        + parseInt(s.startTime.split(':')[1]) + s.duration;
+        + parseInt(s.startTime.split(':')[1]) + s.durationMinutes;
       const endH = String(Math.floor(endMinutes / 60)).padStart(2, '0');
       const endM = String(endMinutes % 60).padStart(2, '0');
       const endTime = `${endH}:${endM}`;
@@ -278,9 +284,9 @@ router.get(
         sex: s.patient?.sex,
         diagnosis: s.patient?.clinicalInfo?.diagnosis,
         startTime: s.startTime,
-        duration: s.duration,
+        duration: s.durationMinutes,
         doctorCode: s.doctor?.doctorCode || '',
-        recentEvals: recentEvals[s.patientId] || [],
+        recentEvals: s.patientId ? (recentEvals[s.patientId] || []) : [],
       };
     });
 
@@ -303,7 +309,8 @@ router.get(
   '/round-print',
   requireAuth,
   asyncHandler(async (req: Request, res: Response) => {
-    const dateParam = (req.query.date as string) || toDateStr(new Date());
+    const dateParam = req.query.date as string;
+    if (!dateParam) throw new AppError(400, 'INVALID_REQUEST', 'date 파라미터가 필요합니다.');
     const doctor = req.query.doctor as string;
     const targetDate = new Date(dateParam + 'T00:00:00');
 
@@ -334,7 +341,7 @@ router.get(
     let latest = '00:00';
     for (const s of rfSlots) {
       if (s.startTime < earliest) earliest = s.startTime;
-      const endMin = parseInt(s.startTime.split(':')[0]) * 60 + parseInt(s.startTime.split(':')[1]) + s.duration;
+      const endMin = parseInt(s.startTime.split(':')[0]) * 60 + parseInt(s.startTime.split(':')[1]) + s.durationMinutes;
       const endStr = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
       if (endStr > latest) latest = endStr;
     }
@@ -350,7 +357,7 @@ router.get(
         diagnosis: s.patient?.clinicalInfo?.diagnosis || '',
         startTime: s.startTime,
         endTime: (() => {
-          const m = parseInt(s.startTime.split(':')[0]) * 60 + parseInt(s.startTime.split(':')[1]) + s.duration;
+          const m = parseInt(s.startTime.split(':')[0]) * 60 + parseInt(s.startTime.split(':')[1]) + s.durationMinutes;
           return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
         })(),
         notes: s.notes || '',

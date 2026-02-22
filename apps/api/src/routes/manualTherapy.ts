@@ -73,30 +73,30 @@ router.get(
     const startDate = weekDates[0];
     const endDate = weekDates[weekDates.length - 1];
 
-    // 치료사 목록
-    const therapists = await prisma.therapist.findMany({
-      where: { deletedAt: null, isActive: true, specialty: '도수' },
-      orderBy: { name: 'asc' },
-    });
-
-    // 해당 주 슬롯
-    const slots = await prisma.manualTherapySlot.findMany({
-      where: {
-        deletedAt: null,
-        date: { gte: new Date(startDate), lte: new Date(endDate) },
-      },
-      include: { patient: PATIENT_INCLUDE },
-      orderBy: [{ date: 'asc' }, { timeSlot: 'asc' }],
-    });
-
-    // 비고 메모
-    const remarks = await prisma.staffDayNote.findMany({
-      where: {
-        noteType: 'MANUAL_THERAPY_REMARK',
-        date: { gte: new Date(startDate), lte: new Date(endDate) },
-      },
-      orderBy: { date: 'asc' },
-    });
+    // 병렬 쿼리 (치료사 + 슬롯 + 비고)
+    const [therapists, slots, remarks] = await Promise.all([
+      prisma.therapist.findMany({
+        where: { deletedAt: null, isActive: true, specialty: '도수' },
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true, workSchedule: true },
+      }),
+      prisma.manualTherapySlot.findMany({
+        where: {
+          deletedAt: null,
+          date: { gte: new Date(startDate), lte: new Date(endDate) },
+        },
+        include: { patient: PATIENT_INCLUDE },
+        orderBy: [{ date: 'asc' }, { timeSlot: 'asc' }],
+      }),
+      prisma.staffDayNote.findMany({
+        where: {
+          noteType: 'MANUAL_THERAPY_REMARK',
+          date: { gte: new Date(startDate), lte: new Date(endDate) },
+        },
+        orderBy: { date: 'asc' },
+        select: { id: true, date: true, content: true },
+      }),
+    ]);
 
     // 그리드 구성
     const grid: Record<string, Record<string, Record<string, any>>> = {};
@@ -113,8 +113,8 @@ router.get(
         grid[slot.therapistId][dateStr][slot.timeSlot] = {
           id: slot.id,
           patientId: slot.patientId,
-          patientName: slot.patient.name,
-          emrPatientId: slot.patient.emrPatientId || '',
+          patientName: slot.patient?.name ?? slot.patientNameRaw ?? '(미매칭)',
+          emrPatientId: slot.patient?.emrPatientId || '',
           treatmentCodes: slot.treatmentCodes,
           sessionMarker: slot.sessionMarker,
           patientType: slot.patientType,
@@ -122,8 +122,8 @@ router.get(
           notes: slot.notes,
           duration: slot.duration,
           version: slot.version,
-          clinicalInfo: (slot.patient as any).clinicalInfo || null,
-          bedInfo: serializeBedInfo((slot.patient as any).admissions || []),
+          clinicalInfo: (slot.patient as any)?.clinicalInfo || null,
+          bedInfo: serializeBedInfo((slot.patient as any)?.admissions || []),
         };
       }
     }
@@ -136,6 +136,7 @@ router.get(
       cancelled: slots.filter(s => s.status === 'CANCELLED').length,
     };
 
+    res.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=300');
     res.json({
       success: true,
       data: {
@@ -163,31 +164,39 @@ router.get(
     const month = parseInt(req.query.month as string, 10) || (new Date().getMonth() + 1);
 
     const startDate = new Date(`${year}-${String(month).padStart(2, '0')}-01`);
-    const endDate = new Date(year, month, 0); // 해당 월 마지막 날
+    const endDate = new Date(`${year}-${String(month).padStart(2, '0')}-${new Date(year, month, 0).getDate()}`);
 
-    const therapists = await prisma.therapist.findMany({
-      where: { deletedAt: null, isActive: true, specialty: '도수' },
-      orderBy: { name: 'asc' },
-    });
-
-    // 전체 슬롯 데이터 (환자 이름 포함)
-    const slots = await prisma.manualTherapySlot.findMany({
-      where: {
-        deletedAt: null,
-        date: { gte: startDate, lte: endDate },
-      },
-      include: { patient: PATIENT_INCLUDE },
-      orderBy: [{ date: 'asc' }, { timeSlot: 'asc' }],
-    });
-
-    // 비고 메모
-    const remarks = await prisma.staffDayNote.findMany({
-      where: {
-        noteType: 'MANUAL_THERAPY_REMARK',
-        date: { gte: startDate, lte: endDate },
-      },
-      orderBy: { date: 'asc' },
-    });
+    // 병렬 쿼리 (치료사 + 슬롯 경량 + 비고)
+    const [therapists, slots, remarks] = await Promise.all([
+      prisma.therapist.findMany({
+        where: { deletedAt: null, isActive: true, specialty: '도수' },
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true, workSchedule: true },
+      }),
+      prisma.manualTherapySlot.findMany({
+        where: {
+          deletedAt: null,
+          date: { gte: startDate, lte: endDate },
+        },
+        select: {
+          id: true, therapistId: true, date: true, timeSlot: true,
+          patientId: true, patientType: true, status: true, notes: true,
+          duration: true, version: true, treatmentCodes: true,
+          sessionMarker: true, patientNameRaw: true,
+          isAdminWork: true, adminWorkNote: true,
+          patient: { select: { name: true, emrPatientId: true } },
+        },
+        orderBy: [{ date: 'asc' }, { timeSlot: 'asc' }],
+      }),
+      prisma.staffDayNote.findMany({
+        where: {
+          noteType: 'MANUAL_THERAPY_REMARK',
+          date: { gte: startDate, lte: endDate },
+        },
+        orderBy: { date: 'asc' },
+        select: { id: true, date: true, content: true },
+      }),
+    ]);
 
     // 그리드 구성: therapistId → date → timeSlot → slotData
     const grid: Record<string, Record<string, Record<string, any>>> = {};
@@ -204,8 +213,8 @@ router.get(
       grid[slot.therapistId][dateStr][slot.timeSlot] = {
         id: slot.id,
         patientId: slot.patientId,
-        patientName: slot.patient.name,
-        emrPatientId: slot.patient.emrPatientId || '',
+        patientName: slot.patient?.name ?? slot.patientNameRaw ?? '(미매칭)',
+        emrPatientId: slot.patient?.emrPatientId || '',
         treatmentCodes: slot.treatmentCodes,
         sessionMarker: slot.sessionMarker,
         patientType: slot.patientType,
@@ -213,8 +222,8 @@ router.get(
         notes: slot.notes,
         duration: slot.duration,
         version: slot.version,
-        clinicalInfo: (slot.patient as any).clinicalInfo || null,
-        bedInfo: serializeBedInfo((slot.patient as any).admissions || []),
+        isAdminWork: (slot as any).isAdminWork || false,
+        adminWorkNote: (slot as any).adminWorkNote || null,
       };
     }
 
@@ -249,6 +258,7 @@ router.get(
       cancelled: slots.filter(s => s.status === 'CANCELLED').length,
     };
 
+    res.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=300');
     res.json({
       success: true,
       data: {
@@ -391,7 +401,7 @@ const updateSlotSchema = z.object({
   treatmentCodes: z.array(z.string()).optional(),
   sessionMarker: z.string().nullable().optional(),
   patientType: z.enum(['INPATIENT', 'OUTPATIENT']).optional(),
-  status: z.enum(['BOOKED', 'COMPLETED', 'NO_SHOW', 'CANCELLED']).optional(),
+  status: z.enum(['BOOKED', 'COMPLETED', 'NO_SHOW', 'CANCELLED', 'WAITING', 'HOLD', 'LTU']).optional(),
   notes: z.string().nullable().optional(),
   version: z.number().int(),
 });
@@ -443,6 +453,221 @@ router.delete(
     });
 
     res.json({ success: true, data: { message: '예약이 취소되었습니다.' } });
+  }),
+);
+
+// ─── GET /api/manual-therapy/unmatched ── 미매칭 슬롯 목록 ───
+router.get(
+  '/unmatched',
+  requireAuth,
+  requirePermission('SCHEDULING', 'READ'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { date, page = '1', limit = '50' } = req.query;
+    const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
+    const limitNum = Math.min(200, Math.max(1, parseInt(limit as string, 10) || 50));
+
+    const where: any = {
+      deletedAt: null,
+      patientId: null,
+      status: { not: 'CANCELLED' },
+      patientNameRaw: { not: null },
+      isAdminWork: false,
+    };
+    if (date) where.date = new Date(date as string);
+
+    const [total, items] = await Promise.all([
+      prisma.manualTherapySlot.count({ where }),
+      prisma.manualTherapySlot.findMany({
+        where,
+        include: {
+          therapist: { select: { id: true, name: true } },
+        },
+        orderBy: [{ date: 'desc' }, { timeSlot: 'asc' }],
+        skip: (pageNum - 1) * limitNum,
+        take: limitNum,
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      data: items.map(s => ({
+        id: s.id,
+        date: toDateStr(s.date),
+        timeSlot: s.timeSlot,
+        therapistName: s.therapist?.name || '',
+        patientNameRaw: s.patientNameRaw,
+        status: s.status,
+        treatmentSubtype: s.treatmentSubtype,
+        sheetSource: s.sheetSource,
+      })),
+      meta: { total, page: pageNum, limit: limitNum },
+    });
+  }),
+);
+
+// ─── PATCH /api/manual-therapy/slots/:id/match-patient ── 미매칭→환자 연결 ───
+const matchPatientSchema = z.object({
+  patientId: z.string().uuid(),
+});
+
+router.patch(
+  '/slots/:id/match-patient',
+  requireAuth,
+  requirePermission('SCHEDULING', 'WRITE'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const body = matchPatientSchema.parse(req.body);
+
+    const slot = await prisma.manualTherapySlot.findFirst({
+      where: { id: req.params.id, deletedAt: null },
+    });
+    if (!slot) throw new AppError(404, 'NOT_FOUND', '슬롯을 찾을 수 없습니다.');
+
+    const patient = await prisma.patient.findFirst({
+      where: { id: body.patientId, deletedAt: null },
+    });
+    if (!patient) throw new AppError(404, 'NOT_FOUND', '환자를 찾을 수 없습니다.');
+
+    const updated = await prisma.manualTherapySlot.update({
+      where: { id: req.params.id },
+      data: {
+        patientId: body.patientId,
+        isManualOverride: true,
+        version: { increment: 1 },
+      },
+      include: {
+        therapist: { select: { id: true, name: true } },
+        patient: { select: { id: true, name: true, emrPatientId: true } },
+      },
+    });
+
+    res.json({ success: true, data: updated });
+  }),
+);
+
+// ─── GET /api/manual-therapy/weekly-summary ── 주간 치료사별×날짜별 요약 ───
+router.get(
+  '/weekly-summary',
+  requireAuth,
+  requirePermission('SCHEDULING', 'READ'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const dateParam = (req.query.start as string) || toDateStr(new Date());
+    const weekDates = getWeekDates(dateParam);
+    const startDate = weekDates[0];
+    const endDate = weekDates[weekDates.length - 1];
+
+    const therapists = await prisma.therapist.findMany({
+      where: { deletedAt: null, isActive: true, specialty: '도수' },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
+    });
+
+    const slots = await prisma.manualTherapySlot.findMany({
+      where: {
+        deletedAt: null,
+        date: { gte: new Date(startDate), lte: new Date(endDate) },
+      },
+      select: {
+        therapistId: true, date: true, status: true, patientId: true,
+        treatmentSubtype: true, isAdminWork: true,
+      },
+    });
+
+    // therapistId → date → summary
+    const summary: Record<string, Record<string, {
+      booked: number; total: number; ltu: number; unmatched: number;
+      subtypes: Record<string, number>;
+    }>> = {};
+
+    for (const t of therapists) {
+      summary[t.id] = {};
+      for (const d of weekDates) {
+        summary[t.id][d] = { booked: 0, total: 0, ltu: 0, unmatched: 0, subtypes: {} };
+      }
+    }
+
+    for (const slot of slots) {
+      const dateStr = toDateStr(slot.date);
+      if (!summary[slot.therapistId]?.[dateStr]) continue;
+      const cell = summary[slot.therapistId][dateStr];
+      cell.total++;
+      if (slot.status === 'BOOKED' || slot.status === 'COMPLETED') cell.booked++;
+      if (slot.status === 'LTU') cell.ltu++;
+      if (!slot.patientId && slot.status !== 'CANCELLED' && !slot.isAdminWork) cell.unmatched++;
+      if (slot.treatmentSubtype) {
+        cell.subtypes[slot.treatmentSubtype] = (cell.subtypes[slot.treatmentSubtype] || 0) + 1;
+      }
+    }
+
+    // Daily totals
+    const dailyTotals: Record<string, { booked: number; total: number; ltu: number; unmatched: number }> = {};
+    for (const d of weekDates) {
+      dailyTotals[d] = { booked: 0, total: 0, ltu: 0, unmatched: 0 };
+      for (const t of therapists) {
+        const cell = summary[t.id][d];
+        dailyTotals[d].booked += cell.booked;
+        dailyTotals[d].total += cell.total;
+        dailyTotals[d].ltu += cell.ltu;
+        dailyTotals[d].unmatched += cell.unmatched;
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        week: { start: startDate, end: endDate },
+        dates: weekDates,
+        therapists: therapists.map(t => ({ id: t.id, name: t.name })),
+        summary,
+        dailyTotals,
+      },
+    });
+  }),
+);
+
+// ─── GET /api/manual-therapy/monthly-summary ── 월간 날짜별 요약 ───
+router.get(
+  '/monthly-summary',
+  requireAuth,
+  requirePermission('SCHEDULING', 'READ'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const year = parseInt(req.query.year as string, 10) || new Date().getFullYear();
+    const month = parseInt(req.query.month as string, 10) || (new Date().getMonth() + 1);
+
+    const startDate = new Date(`${year}-${String(month).padStart(2, '0')}-01`);
+    const endDate = new Date(year, month, 0);
+
+    const slots = await prisma.manualTherapySlot.findMany({
+      where: {
+        deletedAt: null,
+        date: { gte: startDate, lte: endDate },
+      },
+      select: { date: true, status: true, patientId: true, isAdminWork: true, treatmentSubtype: true },
+    });
+
+    const days: Record<string, {
+      booked: number; completed: number; ltu: number;
+      unmatched: number; cancelled: number; adminWork: number; total: number;
+    }> = {};
+
+    for (const slot of slots) {
+      const dateStr = toDateStr(slot.date);
+      if (!days[dateStr]) {
+        days[dateStr] = { booked: 0, completed: 0, ltu: 0, unmatched: 0, cancelled: 0, adminWork: 0, total: 0 };
+      }
+      const day = days[dateStr];
+      day.total++;
+      if (slot.status === 'BOOKED') day.booked++;
+      if (slot.status === 'COMPLETED') day.completed++;
+      if (slot.status === 'LTU') day.ltu++;
+      if (slot.status === 'CANCELLED') day.cancelled++;
+      if (slot.isAdminWork) day.adminWork++;
+      if (!slot.patientId && slot.status !== 'CANCELLED' && !slot.isAdminWork) day.unmatched++;
+    }
+
+    res.json({
+      success: true,
+      data: { year, month, days },
+    });
   }),
 );
 

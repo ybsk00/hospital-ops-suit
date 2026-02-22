@@ -364,12 +364,12 @@ router.get(
               time: rf.startTime,
               endTime: (() => {
                 const [h, m] = rf.startTime.split(':').map(Number);
-                const total = h * 60 + m + rf.duration;
+                const total = h * 60 + m + rf.durationMinutes;
                 return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
               })(),
               type: 'RF',
               patientName: rf.patient?.name || '-',
-              detail: `고주파 ${rf.room.name} (${rf.duration}분)`,
+              detail: `고주파 ${rf.room.name} (${rf.durationMinutes}분)`,
               status: rf.status,
             });
           }

@@ -562,7 +562,7 @@ export async function getManualTherapySchedule(args: Record<string, any>) {
       date: s.date.toISOString().slice(0, 10),
       time: s.timeSlot,
       therapist: s.therapist.name,
-      patient: s.patient.name,
+      patient: s.patient?.name ?? s.patientNameRaw ?? '(미매칭)',
       treatmentCodes: s.treatmentCodes,
       sessionMarker: s.sessionMarker,
       patientType: s.patientType,
@@ -600,11 +600,11 @@ export async function getRfSchedule(args: Record<string, any>) {
     total: slots.length,
     slots: slots.map(s => ({
       room: s.room.name + '번',
-      patient: s.patient.name,
+      patient: s.patient?.name ?? s.patientNameRaw ?? '(미매칭)',
       chartNumber: s.patient?.emrPatientId || '',
       doctorCode: s.doctor?.doctorCode || '',
       startTime: s.startTime,
-      duration: s.duration,
+      duration: s.durationMinutes,
       patientType: s.patientType,
       status: s.status,
     })),
@@ -667,7 +667,7 @@ export async function checkRfAvailability(args: Record<string, any>) {
       deletedAt: null,
       status: { not: 'CANCELLED' },
     },
-    select: { roomId: true, startTime: true, duration: true },
+    select: { roomId: true, startTime: true, durationMinutes: true },
   });
 
   function timeToMin(t: string) {
@@ -684,7 +684,7 @@ export async function checkRfAvailability(args: Record<string, any>) {
     const roomSlots = existingSlots.filter(s => s.roomId === room.id);
     const hasConflict = roomSlots.some(s => {
       const sStart = timeToMin(s.startTime);
-      const sEnd = sStart + s.duration + 30;
+      const sEnd = sStart + s.durationMinutes + 30;
       return checkStart < sEnd && sStart < checkEnd;
     });
 
@@ -791,7 +791,7 @@ export async function findPatientBookings(args: Record<string, any>) {
       type: '고주파',
       date: s.date.toISOString().slice(0, 10),
       time: s.startTime,
-      detail: `${s.room.name}번 기계, ${s.duration}분`,
+      detail: `${s.room.name}번 기계, ${s.durationMinutes}분`,
       id: s.id,
     });
   }
@@ -1188,7 +1188,7 @@ export async function getRoundPrep(args: Record<string, any>) {
       chartNumber: s.patient?.emrPatientId,
       diagnosis: s.patient?.clinicalInfo?.diagnosis,
       time: s.startTime,
-      duration: s.duration,
+      duration: s.durationMinutes,
       recentEvals: s.patientId ? (recentEvals[s.patientId] || []) : [],
     })),
   };

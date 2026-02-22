@@ -137,7 +137,7 @@ router.get(
         addSchedule(s.patientId, {
           type: 'RF',
           time: s.startTime,
-          duration: s.duration,
+          duration: s.durationMinutes,
           detail: `고주파 ${s.room.name}번`,
           doctor: s.doctor?.doctorCode || '',
         });

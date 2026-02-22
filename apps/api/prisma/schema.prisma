@@ -171,11 +171,13 @@ model Patient {
   labResults          LabResult[]
   labAnalyses         LabAnalysis[]
   aiReports           AiReport[]
-  manualTherapySlots  ManualTherapySlot[]  // Phase 8
-  rfScheduleSlots     RfScheduleSlot[]     // Phase 8
-  clinicalInfo        PatientClinicalInfo? // Phase 8E
-  handoverEntries     HandoverEntry[]      // Phase 8E
-  rfTreatmentEvals    RfTreatmentEvaluation[] // Phase 8E
+  manualTherapySlots     ManualTherapySlot[]       // Phase 8
+  rfScheduleSlots        RfScheduleSlot[]          // Phase 8
+  clinicalInfo           PatientClinicalInfo?      // Phase 8E
+  handoverEntries        HandoverEntry[]           // Phase 8E
+  rfTreatmentEvals       RfTreatmentEvaluation[]   // Phase 8E
+  wardAdmissions         WardAdmission[]           // Phase 9
+  outpatientAppointments OutpatientAppointment[]   // Phase 9
 }
 
 // ============================================================
@@ -463,6 +465,12 @@ model Appointment {
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
   deletedAt          DateTime?
+
+  // Sheet Sync 필드
+  doctorCode         String?                                    // 시트 의사 코드
+  consultationType   ConsultType?                               // 진료 유형
+  treatmentContent   String?                                    // 치료 내용
+  sheetNote          String?                                    // 시트 메모
 }
 
 // ============================================================
@@ -1034,6 +1042,68 @@ enum SlotStatus {
   CANCELLED
 }
 
+// ── Sheet Sync: RF 슬롯 전용 (기존 SlotStatus 동결) ──
+enum RfSlotStatus {
+  BOOKED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  BLOCKED        // 수액실/황출기/문의 등 리소스 점유
+}
+
+enum RfSpecialType {
+  INFUSION_USE   // 수액실 사용
+  DEVICE_USE     // 황출기 사용
+  BLOCKED        // 고주파실 문의 후 예약
+}
+
+enum RfRoomType {
+  THERAPY        // 일반 고주파 치료실
+  INFUSION       // 수액실
+  EQUIPMENT      // 황출기 등 특수 장비
+}
+
+// ── Sheet Sync: 도수치료 슬롯 전용 (EMPTY는 DB 저장 안 함) ──
+enum ManualSlotStatus {
+  BOOKED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  WAITING        // IN/IN20/IN30 운영 메모
+  HOLD           // W1
+  LTU
+}
+
+enum ManualSubtype {
+  HEAT           // 온열
+  LYMPH          // 림프
+  NEURAL         // 신경
+  HEAT_NEURAL    // 온/신
+  GENERAL        // 일반
+}
+
+// ── Sheet Sync: 외래 진료 유형 ──
+enum ConsultType {
+  AUTONOMIC_NERVE
+  NERVE_BLOCK
+  INFUSION
+  RF_HEAT
+  PAIN
+  GENERAL
+}
+
+// ── Sheet Sync: 동기화 유형/방향 ──
+enum SyncType {
+  FULL
+  INCREMENTAL
+  WRITE_BACK
+}
+
+enum SyncDirection {
+  SHEET_TO_DB
+  DB_TO_SHEET
+}
+
 // ── 치료사 ──
 model Therapist {
   id           String   @id @default(uuid())
@@ -1053,15 +1123,15 @@ model ManualTherapySlot {
   id             String            @id @default(uuid())
   therapistId    String
   therapist      Therapist         @relation(fields: [therapistId], references: [id])
-  patientId      String
-  patient        Patient           @relation(fields: [patientId], references: [id])
+  patientId      String?
+  patient        Patient?          @relation(fields: [patientId], references: [id])
   date           DateTime          @db.Date
   timeSlot       String
   duration       Int               @default(30)
   treatmentCodes String[]
   sessionMarker  String?
   patientType    PatientType       @default(INPATIENT)
-  status         SlotStatus        @default(BOOKED)
+  status         ManualSlotStatus  @default(BOOKED)
   notes          String?
   source         AppointmentSource @default(INTERNAL)
   chatSessionId  String?
@@ -1070,51 +1140,76 @@ model ManualTherapySlot {
   updatedAt      DateTime          @updatedAt
   deletedAt      DateTime?
 
-  @@unique([therapistId, date, timeSlot])
+  // Sheet Sync 필드
+  patientNameRaw    String?                          // 시트 원본 이름
+  treatmentSubtype  ManualSubtype?                   // HEAT/LYMPH/NEURAL 등
+  statusNote        String?                          // IN20, W1 등 원본 코드
+  isAdminWork       Boolean          @default(false) // 전산업무/TMS 등
+  adminWorkNote     String?                          // "서아라TMS", "스타킹 결제" 등
+  rawCellValue      String?                          // 시트 셀 원본 텍스트
+  sheetSyncedAt     DateTime?                        // 마지막 시트 동기화 시각
+  sheetSource       String?                          // "26_02" 등 탭명
+  isManualOverride  Boolean          @default(false) // 웹에서 수동 수정 여부
+
+  @@unique([therapistId, date, timeSlot, deletedAt])
+  @@index([therapistId, date])
   @@index([date, status])
   @@index([patientId])
 }
 
 // ── 고주파 치료실/기계 ──
 model RfTreatmentRoom {
-  id           String   @id @default(uuid())
-  name         String   @unique
-  displayOrder Int      @default(0)
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id           String     @id @default(uuid())
+  name         String     @unique
+  displayOrder Int        @default(0)
+  roomType     RfRoomType @default(THERAPY)
+  roomNumber   Int?                           // 시트상 기계 번호 (1~15)
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 
   slots RfScheduleSlot[]
 }
 
 // ── 고주파예약 슬롯 ──
 model RfScheduleSlot {
-  id            String            @id @default(uuid())
-  roomId        String
-  room          RfTreatmentRoom   @relation(fields: [roomId], references: [id])
-  patientId     String
-  patient       Patient           @relation(fields: [patientId], references: [id])
-  doctorId      String
-  doctor        Doctor            @relation(fields: [doctorId], references: [id])
-  date          DateTime          @db.Date
-  startTime     String
-  duration      Int
-  patientType   PatientType       @default(INPATIENT)
-  status        SlotStatus        @default(BOOKED)
-  notes         String?
-  source        AppointmentSource @default(INTERNAL)
-  chatSessionId String?
-  version       Int               @default(0)
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  deletedAt     DateTime?
+  id               String            @id @default(uuid())
+  roomId           String
+  room             RfTreatmentRoom   @relation(fields: [roomId], references: [id])
+  patientId        String?
+  patient          Patient?          @relation(fields: [patientId], references: [id])
+  doctorId         String?
+  doctor           Doctor?           @relation(fields: [doctorId], references: [id])
+  date             DateTime          @db.Date
+  startTime        String
+  durationMinutes  Int               @map("duration")
+  patientType      PatientType       @default(INPATIENT)
+  status           RfSlotStatus      @default(BOOKED)
+  notes            String?
+  source           AppointmentSource @default(INTERNAL)
+  chatSessionId    String?
+  version          Int               @default(0)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  deletedAt        DateTime?
 
-  evaluations   RfTreatmentEvaluation[] // Phase 8E
+  // Sheet Sync 필드
+  patientNameRaw   String?                          // 시트 원본 이름
+  patientEmrId     String?                          // 시트 환자번호 (22339 등)
+  specialType      RfSpecialType?                   // 수액실/황출기/문의
+  rawCellValue     String?                          // 시트 셀 원본 텍스트
+  sheetSyncedAt    DateTime?                        // 마지막 시트 동기화 시각
+  sheetSource      String?                          // "26_02" 등 탭명
+  isManualOverride Boolean          @default(false) // 웹에서 수동 수정 여부
 
+  evaluations      RfTreatmentEvaluation[] // Phase 8E
+
+  @@unique([date, startTime, roomId, deletedAt])
   @@index([roomId, date])
   @@index([patientId, date])
   @@index([date, status])
   @@index([doctorId])
+  @@index([patientEmrId])
 }
 
 // ── 직원 일일 메모 (비고, OFF 등) ──
@@ -1280,4 +1375,215 @@ model AdmissionEvent {
 
   @@index([admissionId])
   @@index([eventDate])
+}
+
+// ============================================================
+// Sheet Sync: 운영 설정 (채움률 계산용)
+// ============================================================
+
+model OperatingConfig {
+  id                 String    @id @default(uuid())
+  type               String    // "RF" | "MANUAL"
+  startTime          String    // "09:00"
+  endTime            String    // "16:30" (RF) | "17:00" (Manual)
+  slotDuration       Int       // 30 (분)
+  activeRoomIds      String[]  // RF: RfTreatmentRoom ID 목록
+  activeTherapistIds String[]  // Manual: Therapist ID 목록
+  effectiveFrom      DateTime
+  effectiveTo        DateTime?
+  createdAt          DateTime  @default(now())
+}
+
+// ============================================================
+// Sheet Sync: 동기화 로그
+// ============================================================
+
+model SheetSyncLog {
+  id                 String         @id @default(uuid())
+  sheetId            String
+  sheetTab           String
+  syncType           SyncType
+  direction          SyncDirection
+  startedAt          DateTime
+  completedAt        DateTime?
+  lastSyncedAt       DateTime?      // 증분 기준점 (=completedAt)
+  rowsProcessed      Int            @default(0)
+  rowsCreated        Int            @default(0)
+  rowsUpdated        Int            @default(0)
+  rowsFailed         Int            @default(0)
+  errorDetails       Json?
+  contentHash        String?        // SHA-256 파싱 결과 해시
+  sourceLastEditedAt DateTime?      // Apps Script lastEditedAt
+  writtenCells       Json?          // write-back 셀 좌표 [{cell:"A5",value:"..."}]
+  triggeredBy        String?        // "manual" | "time_trigger" | "bullmq_worker"
+  createdAt          DateTime       @default(now())
+
+  @@index([sheetId, sheetTab, startedAt])
+}
+
+// ============================================================
+// Google Sheets OAuth 설정 (싱글톤)
+// ============================================================
+
+model GoogleSheetsConfig {
+  id                    String    @id  // always "singleton"
+  accessToken           String?
+  refreshToken          String?
+  tokenExpiresAt        DateTime?
+  scope                 String?
+  connectedEmail        String?
+  connectedBy           String?
+  rfSpreadsheetId       String?
+  manualSpreadsheetId   String?
+  wardSpreadsheetId     String?
+  outpatientSpreadsheetId String?
+  autoSyncEnabled       Boolean   @default(true)
+  autoSyncIntervalMin   Int       @default(5)
+  lastAutoSyncAt        DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+}
+
+// ============================================================
+// Phase 9: 입원현황 + 외래예약 (Google Sheets 미러)
+// ============================================================
+
+enum WardType {
+  SINGLE
+  DOUBLE
+  QUAD
+}
+
+enum BedPos {
+  SINGLE      // 1인실 고정값
+  DOOR        // 문앞
+  MIDDLE      // 중간
+  INNER_LEFT  // 안창좌측
+  INNER_RIGHT // 안창우측
+  INNER       // 안쪽 (2인실)
+  WINDOW      // 창문X
+}
+
+enum WardAdmissionStatus {
+  ADMITTED
+  PLANNED
+  WAITING
+  DISCHARGED
+  CANCELLED
+}
+
+enum WardSheetRegion {
+  CURRENT
+  PLANNED
+  SIDE_MEMO
+}
+
+enum UpdateSource {
+  SHEET
+  WEB
+}
+
+// ── 병상 마스터 (입원현황 시트용) ──
+model WardBed {
+  id          String          @id @default(cuid())
+  bedKey      String          @unique  // "101" / "201_DOOR" / "301_INNER_LEFT"
+  wardType    WardType
+  roomNumber  String
+  bedPosition BedPos
+  name        String?         // 시트 표시명 (큰방VIP 등)
+  isActive    Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+
+  admissions  WardAdmission[]
+}
+
+// ── 입원 이벤트 (Google Sheets 미러) ──
+model WardAdmission {
+  id             String              @id @default(cuid())
+  bedId          String
+  bed            WardBed             @relation(fields: [bedId], references: [id])
+  patientId      String?
+  patient        Patient?            @relation(fields: [patientId], references: [id])
+  patientNameRaw String?
+  diagnosis      String?
+  admitDate      DateTime?
+  dischargeDate  DateTime?
+  dischargeTime  String?
+  status         WardAdmissionStatus @default(ADMITTED)
+  isPlanned      Boolean             @default(false)
+  memoRaw        String?
+  note           String?
+
+  // 시트 좌표 (시트 연동 레코드는 NOT NULL)
+  sheetTab       String
+  sheetA1        String
+  sheetRegion    WardSheetRegion
+  sheetLineIndex Int              @default(0)  // 셀 내 n번째 줄 (0, 1, 2...)
+
+  // 양방향 동기화 공통
+  sheetSyncedAt       DateTime?
+  isManualOverride    Boolean      @default(false)
+  needsSheetWriteback Boolean      @default(false)
+  lastUpdatedSource   UpdateSource @default(SHEET)
+  sheetLockedUntil    DateTime?
+  deletedAt           DateTime?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@unique([bedId, sheetTab, sheetA1, sheetRegion, sheetLineIndex, deletedAt])
+  @@index([bedId, status])
+  @@index([admitDate, dischargeDate])
+}
+
+// ── 대기 메모 (병실 우측 메모 영역) ──
+model WardWaitingMemo {
+  id            String    @id @default(cuid())
+  wardType      WardType
+  content       String
+  parsedItems   Json?     // [{ name, diagnosis, note }]
+  sheetTab      String?
+  sheetA1       String?
+  sheetSyncedAt DateTime?
+  createdAt     DateTime  @default(now())
+}
+
+// ── 외래 예약 (Google Sheets 미러) ──
+model OutpatientAppointment {
+  id               String            @id @default(cuid())
+  appointmentDate  DateTime
+  timeSlot         String            // "09:30"
+  doctorCode       String?           // "C" | "J" — nullable
+  slotIndex        Int               // (timeSlot, doctorCode) 조합 내 순서 (UI 표시용)
+  patientId        String?
+  patient          Patient?          @relation(fields: [patientId], references: [id])
+  patientNameRaw   String?
+  isNewPatient     Boolean           @default(false)
+  phoneNumber      String?
+  treatmentContent String?
+  status           AppointmentStatus @default(BOOKED)
+  rawCellValue     String?
+
+  // 시트 좌표 (sheetA1Name = 소스 identity 키)
+  sheetTab      String
+  sheetA1Name   String   // 이름칸 A1 좌표 (예: "AG13")
+  sheetA1Doctor String?  // 주치의칸 (쓰기 전용)
+  sheetA1Phone  String?
+  sheetA1Content String?
+
+  // A1 이동 감지용 보조 키 (감지 전용, 멱등성 키 아님)
+  sourceKey     String?  // sha1(sheetTab + appointmentDate + timeSlot + rawCellValue)
+
+  // 양방향 동기화 공통
+  sheetSyncedAt       DateTime?
+  isManualOverride    Boolean           @default(false)
+  needsSheetWriteback Boolean           @default(false)
+  lastUpdatedSource   UpdateSource      @default(SHEET)
+  sheetLockedUntil    DateTime?
+  deletedAt           DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  @@unique([sheetTab, sheetA1Name, deletedAt])
+  @@index([appointmentDate, timeSlot, doctorCode, slotIndex])
+  @@index([appointmentDate, status])
 }

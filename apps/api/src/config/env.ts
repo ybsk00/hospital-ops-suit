@@ -47,6 +47,19 @@ export const env = {
   YOUTUBE_API_KEY: optionalEnv('YOUTUBE_API_KEY', ''),
   YOUTUBE_CHANNEL_ID: optionalEnv('YOUTUBE_CHANNEL_ID', ''),
 
+  // Sheet Sync
+  SHEET_SYNC_API_KEY: optionalEnv('SHEET_SYNC_API_KEY', ''),
+  RF_SPREADSHEET_ID: optionalEnv('RF_SPREADSHEET_ID', ''),
+  MANUAL_SPREADSHEET_ID: optionalEnv('MANUAL_SPREADSHEET_ID', ''),
+  WARD_SPREADSHEET_ID: optionalEnv('WARD_SPREADSHEET_ID', ''),
+  OUTPATIENT_SPREADSHEET_ID: optionalEnv('OUTPATIENT_SPREADSHEET_ID', ''),
+  GOOGLE_SHEETS_SA_KEY: optionalEnv('GOOGLE_SHEETS_SA_KEY', ''),
+
+  // Google OAuth 2.0 (Sheets 연동)
+  GOOGLE_OAUTH_CLIENT_ID: optionalEnv('GOOGLE_OAUTH_CLIENT_ID', ''),
+  GOOGLE_OAUTH_CLIENT_SECRET: optionalEnv('GOOGLE_OAUTH_CLIENT_SECRET', ''),
+  GOOGLE_OAUTH_REDIRECT_URI: optionalEnv('GOOGLE_OAUTH_REDIRECT_URI', 'http://localhost:3000/api/google/oauth/callback'),
+
   // File Storage
   FILE_STORAGE_PATH: optionalEnv('FILE_STORAGE_PATH', './storage'),
   FILE_SIGNED_URL_EXPIRES: parseInt(optionalEnv('FILE_SIGNED_URL_EXPIRES', '3600'), 10),

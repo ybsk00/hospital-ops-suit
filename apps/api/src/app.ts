@@ -35,6 +35,11 @@ import roomBookingRoutes from './routes/roomBooking';
 import handoverRoutes from './routes/handover';
 import rfEvaluationRoutes from './routes/rfEvaluation';
 import doctorScheduleRoutes from './routes/doctorSchedule';
+import sheetSyncRoutes from './routes/sheetSync';
+import schedulingRoutes from './routes/scheduling';
+import googleOAuthRoutes from './routes/googleOAuth';
+import wardRoutes from './routes/ward';
+import outpatientRoutes from './routes/outpatient';
 
 const app = express();
 
@@ -101,6 +106,11 @@ app.use('/api/room-booking', roomBookingRoutes);
 app.use('/api/handover', handoverRoutes);
 app.use('/api/rf-evaluation', rfEvaluationRoutes);
 app.use('/api/doctor-schedule', doctorScheduleRoutes);
+app.use('/api/sheet-sync', sheetSyncRoutes);
+app.use('/api/scheduling', schedulingRoutes);
+app.use('/api/google/oauth', googleOAuthRoutes);
+app.use('/api/ward', wardRoutes);
+app.use('/api/outpatient', outpatientRoutes);
 
 // 헬스 체크
 app.get('/health', (_req, res) => {

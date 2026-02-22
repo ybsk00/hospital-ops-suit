@@ -1,0 +1,3 @@
+-- This is a baseline migration.
+-- The database was already set up using `prisma db push` before migrations were introduced.
+-- This empty baseline represents the state of the database before migration tracking began.

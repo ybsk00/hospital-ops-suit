@@ -725,7 +725,7 @@ router.post(
               doctorId: rf.doctorId,
               date: new Date(s.date),
               startTime: s.startTime,
-              duration: s.duration,
+              durationMinutes: s.duration,
               patientType: 'INPATIENT',
               status: 'BOOKED',
               source: 'INTERNAL',

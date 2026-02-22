@@ -59,12 +59,15 @@ steps:
           --image gcr.io/$PROJECT_ID/hospital-ops-api:$COMMIT_SHA \
           --region asia-northeast3 \
           --allow-unauthenticated \
-          --min-instances 0 \
-          --max-instances 2 \
+          --min-instances 1 \
+          --max-instances 3 \
           --memory 1Gi \
           --cpu 1 \
-          --timeout 300 \
-          --set-env-vars "^;^CORS_ORIGIN=http://localhost:3000,https://hospital-ops-web-783253438610.asia-northeast3.run.app;TZ=Asia/Seoul;GEMINI_CHAT_MODEL=gemini-2.5-flash;JWT_ACCESS_EXPIRES=4h;JWT_REFRESH_EXPIRES=30d;YOUTUBE_CHANNEL_ID=UCrbB5oQTj3o8zkUUQMAOwHg" \
+          --concurrency 80 \
+          --timeout 60 \
+          --execution-environment gen2 \
+          --cpu-boost \
+          --set-env-vars "^;^CORS_ORIGIN=http://localhost:3000,https://hospital-ops-web-783253438610.asia-northeast3.run.app;TZ=Asia/Seoul;GEMINI_CHAT_MODEL=gemini-2.5-flash;JWT_ACCESS_EXPIRES=4h;JWT_REFRESH_EXPIRES=30d;YOUTUBE_CHANNEL_ID=UCrbB5oQTj3o8zkUUQMAOwHg;NODE_OPTIONS=--max-old-space-size=896" \
           --set-secrets="DATABASE_URL=hospital-ops-database-url:latest,DIRECT_URL=hospital-ops-database-url:latest,JWT_SECRET=hospital-ops-jwt-secret:latest,JWT_REFRESH_SECRET=hospital-ops-jwt-refresh-secret:latest,GEMINI_API_KEY=hospital-ops-gemini-api-key:latest,YOUTUBE_API_KEY=hospital-ops-youtube-api-key:latest"
     waitFor: ['push-api']
 
@@ -84,15 +87,20 @@ steps:
       - 'asia-northeast3'
       - '--allow-unauthenticated'
       - '--min-instances'
-      - '0'
+      - '1'
       - '--max-instances'
-      - '2'
+      - '3'
       - '--memory'
-      - '1Gi'
+      - '512Mi'
       - '--cpu'
       - '1'
+      - '--concurrency'
+      - '80'
       - '--timeout'
-      - '300'
+      - '60'
+      - '--execution-environment'
+      - 'gen2'
+      - '--cpu-boost'
       - '--set-env-vars'
       - 'NEXT_PUBLIC_API_URL=https://hospital-ops-api-783253438610.asia-northeast3.run.app'
     waitFor: ['push-web']

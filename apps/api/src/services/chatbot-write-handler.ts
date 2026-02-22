@@ -1007,7 +1007,7 @@ export async function confirmPendingAction(
             doctorId: payload.doctorId,
             date: new Date(payload.date),
             startTime: payload.time,
-            duration: payload.duration,
+            durationMinutes: payload.duration,
             patientType: payload.patientType || 'INPATIENT',
             source: 'CHATBOT',
             chatSessionId: pending.sessionId,
@@ -1033,7 +1033,7 @@ export async function confirmPendingAction(
         if (payload.newDate) rfUpdateData.date = new Date(payload.newDate);
         if (payload.newTime) rfUpdateData.startTime = payload.newTime;
         if (payload.newRoomId) rfUpdateData.roomId = payload.newRoomId;
-        if (payload.newDuration) rfUpdateData.duration = payload.newDuration;
+        if (payload.newDuration) rfUpdateData.durationMinutes = payload.newDuration;
         if (payload.newDoctorId) rfUpdateData.doctorId = payload.newDoctorId;
 
         await prisma.rfScheduleSlot.update({
@@ -2022,7 +2022,7 @@ async function handleModifyRfScheduleSlot(
 
   const targetDate = args.newDate || existingSlot.date.toISOString().slice(0, 10);
   const targetTime = args.newTime || existingSlot.startTime;
-  const targetDuration = args.newDuration || existingSlot.duration;
+  const targetDuration = args.newDuration || existingSlot.durationMinutes;
   const targetDoctorCode = args.newDoctorCode || existingSlot.doctor?.doctorCode || '';
 
   // resolve newDoctorCode to doctorId
@@ -2064,7 +2064,7 @@ async function handleModifyRfScheduleSlot(
     let hasConflict = false;
     for (const es of existingSlots) {
       const esStartMin = timeToMinutes(es.startTime);
-      const esEndMin = esStartMin + es.duration;
+      const esEndMin = esStartMin + es.durationMinutes;
       const esBufferEnd = esEndMin + 30;
       if (newStartMin < esBufferEnd && esStartMin < newBufferEnd) {
         hasConflict = true;
@@ -2089,7 +2089,7 @@ async function handleModifyRfScheduleSlot(
     originalDate: existingSlot.date.toISOString().slice(0, 10),
     originalTime: existingSlot.startTime,
     originalRoom: existingSlot.room.name + '번',
-    originalDuration: existingSlot.duration + '분',
+    originalDuration: existingSlot.durationMinutes + '분',
     newDate: targetDate,
     newTime: targetTime,
     newRoom: newRoomName + '번',

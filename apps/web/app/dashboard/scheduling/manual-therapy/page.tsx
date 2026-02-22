@@ -596,10 +596,17 @@ export default function ManualTherapyPage() {
   const [weekDate, setWeekDate] = useState(() => toDateStr(new Date()));
   const [data, setData] = useState<WeeklyData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [weeklyError, setWeeklyError] = useState<string | null>(null);
 
   const [monthYear, setMonthYear] = useState(() => new Date().getFullYear());
   const [monthNum, setMonthNum] = useState(() => new Date().getMonth() + 1);
   const [monthlyData, setMonthlyData] = useState<MonthlyData | null>(null);
+  const [monthlyLoading, setMonthlyLoading] = useState(false);
+  const [monthlyError, setMonthlyError] = useState<string | null>(null);
+
+  // 메모리 캐시 (같은 주/월 재방문 시 즉시 표시)
+  const weeklyCache = useRef<Map<string, WeeklyData>>(new Map());
+  const monthlyCache = useRef<Map<string, MonthlyData>>(new Map());
 
   const [modalOpen, setModalOpen] = useState(false);
   const [modalTherapist, setModalTherapist] = useState<Therapist | null>(null);
@@ -607,29 +614,55 @@ export default function ManualTherapyPage() {
   const [modalTimeSlot, setModalTimeSlot] = useState('');
   const [modalExisting, setModalExisting] = useState<SlotData | null>(null);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (forceRefresh = false) => {
     if (!accessToken) return;
+    const cacheKey = weekDate;
+    const cached = weeklyCache.current.get(cacheKey);
+    // 캐시 히트: 즉시 표시 후 백그라운드 갱신
+    if (cached && !forceRefresh) {
+      setData(cached);
+      setLoading(false);
+      api<WeeklyData>(`/api/manual-therapy/weekly?date=${weekDate}`, { token: accessToken })
+        .then(res => { if (res.data) { weeklyCache.current.set(cacheKey, res.data); setData(res.data); } })
+        .catch(() => {});
+      return;
+    }
     setLoading(true);
+    setWeeklyError(null);
     try {
       const res = await api<WeeklyData>(`/api/manual-therapy/weekly?date=${weekDate}`, { token: accessToken });
-      setData(res.data || null);
+      if (res.data) { weeklyCache.current.set(cacheKey, res.data); setData(res.data); }
+      else setWeeklyError('데이터를 불러오지 못했습니다.');
     } catch (err: any) {
-      console.error('Failed to load schedule:', err);
+      setWeeklyError(err.message || '주간 데이터 로드 실패');
     } finally {
       setLoading(false);
     }
   }, [accessToken, weekDate]);
 
-  const fetchMonthlyData = useCallback(async () => {
+  const fetchMonthlyData = useCallback(async (forceRefresh = false) => {
     if (!accessToken) return;
-    setLoading(true);
+    const cacheKey = `${monthYear}-${monthNum}`;
+    const cached = monthlyCache.current.get(cacheKey);
+    // 캐시 히트: 즉시 표시 후 백그라운드 갱신
+    if (cached && !forceRefresh) {
+      setMonthlyData(cached);
+      setMonthlyLoading(false);
+      api<MonthlyData>(`/api/manual-therapy/monthly?year=${monthYear}&month=${monthNum}`, { token: accessToken })
+        .then(res => { if (res.data) { monthlyCache.current.set(cacheKey, res.data); setMonthlyData(res.data); } })
+        .catch(() => {});
+      return;
+    }
+    setMonthlyLoading(true);
+    setMonthlyError(null);
     try {
       const res = await api<MonthlyData>(`/api/manual-therapy/monthly?year=${monthYear}&month=${monthNum}`, { token: accessToken });
-      setMonthlyData(res.data || null);
+      if (res.data) { monthlyCache.current.set(cacheKey, res.data); setMonthlyData(res.data); }
+      else setMonthlyError('데이터를 불러오지 못했습니다.');
     } catch (err: any) {
-      console.error('Failed to load monthly schedule:', err);
+      setMonthlyError(err.message || '월간 데이터 로드 실패');
     } finally {
-      setLoading(false);
+      setMonthlyLoading(false);
     }
   }, [accessToken, monthYear, monthNum]);
 
@@ -638,10 +671,10 @@ export default function ManualTherapyPage() {
     else fetchMonthlyData();
   }, [viewMode, fetchData, fetchMonthlyData]);
 
-  // WebSocket 실시간 갱신
+  // WebSocket 실시간 갱신 (forceRefresh=true로 캐시 무효화)
   const refreshActive = useCallback(() => {
-    if (viewMode === 'weekly') fetchData();
-    else fetchMonthlyData();
+    if (viewMode === 'weekly') fetchData(true);
+    else fetchMonthlyData(true);
   }, [viewMode, fetchData, fetchMonthlyData]);
   useScheduleRefresh(refreshActive);
 
@@ -655,8 +688,8 @@ export default function ManualTherapyPage() {
 
   const handleModalSave = () => {
     setModalOpen(false);
-    if (viewMode === 'weekly') fetchData();
-    else fetchMonthlyData();
+    if (viewMode === 'weekly') fetchData(true);
+    else fetchMonthlyData(true);
   };
 
   const goToday = () => setWeekDate(toDateStr(new Date()));
@@ -753,16 +786,18 @@ export default function ManualTherapyPage() {
             <button onClick={() => shiftMonth(-1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><ChevronLeft size={20} /></button>
             <div className="flex items-center gap-3">
               <span className="font-semibold text-slate-800">{monthYear}년 {monthNum}월</span>
-              <button onClick={goThisMonth} className="text-xs px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100">이번달</button>
             </div>
             <button onClick={() => shiftMonth(1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><ChevronRight size={20} /></button>
           </div>
 
-          {loading && !monthlyData && (
-            <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm">로딩 중...</div></div>
+          {monthlyLoading && (
+            <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm animate-pulse">데이터 로딩 중...</div></div>
+          )}
+          {!monthlyLoading && monthlyError && (
+            <div className="flex items-center justify-center h-32 text-red-500 text-sm">{monthlyError}</div>
           )}
 
-          {monthlyData && monthlyData.weeks.map((week, weekIdx) => {
+          {!monthlyLoading && monthlyData && monthlyData.weeks.map((week, weekIdx) => {
             const weekLabel = `${weekIdx + 1}주차 (${formatDate(week.start)}~${formatDate(week.end)})`;
             return (
               <div key={week.start} className="mb-2">
@@ -795,13 +830,15 @@ export default function ManualTherapyPage() {
             <button onClick={() => setWeekDate(shiftWeek(data ? week.start : weekDate, -1))} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><ChevronLeft size={20} /></button>
             <div className="flex items-center gap-3">
               <span className="font-semibold text-slate-800">{data ? getWeekLabel(week.start, week.end) : `${weekDate} 주간`}</span>
-              <button onClick={goToday} className="text-xs px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100">오늘</button>
             </div>
             <button onClick={() => setWeekDate(shiftWeek(data ? week.start : weekDate, 1))} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><ChevronRight size={20} /></button>
           </div>
 
-          {loading && !data && (
-            <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm">로딩 중...</div></div>
+          {loading && (
+            <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm animate-pulse">데이터 로딩 중...</div></div>
+          )}
+          {!loading && weeklyError && (
+            <div className="flex items-center justify-center h-32 text-red-500 text-sm">{weeklyError}</div>
           )}
         </>
       )}

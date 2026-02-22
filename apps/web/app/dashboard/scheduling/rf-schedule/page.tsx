@@ -369,10 +369,18 @@ export default function RfSchedulePage() {
 
   const [weekDate, setWeekDate] = useState(() => toDateStr(new Date()));
   const [weeklyData, setWeeklyData] = useState<WeeklyRfData | null>(null);
+  const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const [weeklyError, setWeeklyError] = useState<string | null>(null);
   const [monthYear, setMonthYear] = useState(() => new Date().getFullYear());
   const [monthNum, setMonthNum] = useState(() => new Date().getMonth() + 1);
   const [monthlyData, setMonthlyData] = useState<MonthlyRfData | null>(null);
+  const [monthlyLoading, setMonthlyLoading] = useState(false);
+  const [monthlyError, setMonthlyError] = useState<string | null>(null);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
+
+  // 메모리 캐시 (같은 주/월 재방문 시 즉시 표시)
+  const weeklyCache = useRef<Map<string, WeeklyRfData>>(new Map());
+  const monthlyCache = useRef<Map<string, MonthlyRfData>>(new Map());
 
   const [modalOpen, setModalOpen] = useState(false);
   const [modalRoom, setModalRoom] = useState<Room | null>(null);
@@ -389,24 +397,56 @@ export default function RfSchedulePage() {
     finally { setLoading(false); }
   }, [accessToken, dateStr]);
 
-  const fetchWeeklyData = useCallback(async () => {
+  const fetchWeeklyData = useCallback(async (forceRefresh = false) => {
     if (!accessToken) return;
-    setLoading(true);
+    const cacheKey = weekDate;
+    const cached = weeklyCache.current.get(cacheKey);
+    // 캐시 히트: 즉시 표시 후 백그라운드 갱신
+    if (cached && !forceRefresh) {
+      setWeeklyData(cached);
+      setWeeklyLoading(false);
+      // 백그라운드 갱신 (스피너 없이)
+      api<WeeklyRfData>(`/api/rf-schedule/weekly?date=${weekDate}`, { token: accessToken })
+        .then(res => { if (res.data) { weeklyCache.current.set(cacheKey, res.data); setWeeklyData(res.data); } })
+        .catch(() => {});
+      return;
+    }
+    setWeeklyLoading(true);
+    setWeeklyError(null);
     try {
       const res = await api<WeeklyRfData>(`/api/rf-schedule/weekly?date=${weekDate}`, { token: accessToken });
-      setWeeklyData(res.data || null);
-    } catch (err: any) { console.error('Failed to load weekly RF schedule:', err); }
-    finally { setLoading(false); }
+      if (res.data) { weeklyCache.current.set(cacheKey, res.data); setWeeklyData(res.data); }
+      else setWeeklyError('데이터를 불러오지 못했습니다.');
+    } catch (err: any) {
+      setWeeklyError(err.message || '주간 데이터 로드 실패');
+    }
+    finally { setWeeklyLoading(false); }
   }, [accessToken, weekDate]);
 
-  const fetchMonthlyData = useCallback(async () => {
+  const fetchMonthlyData = useCallback(async (forceRefresh = false) => {
     if (!accessToken) return;
-    setLoading(true);
+    const cacheKey = `${monthYear}-${monthNum}`;
+    const cached = monthlyCache.current.get(cacheKey);
+    // 캐시 히트: 즉시 표시 후 백그라운드 갱신
+    if (cached && !forceRefresh) {
+      setMonthlyData(cached);
+      setMonthlyLoading(false);
+      // 백그라운드 갱신 (스피너 없이)
+      api<MonthlyRfData>(`/api/rf-schedule/monthly?year=${monthYear}&month=${monthNum}`, { token: accessToken })
+        .then(res => { if (res.data) { monthlyCache.current.set(cacheKey, res.data); setMonthlyData(res.data); } })
+        .catch(() => {});
+      return;
+    }
+    setMonthlyLoading(true);
+    setMonthlyError(null);
     try {
       const res = await api<MonthlyRfData>(`/api/rf-schedule/monthly?year=${monthYear}&month=${monthNum}`, { token: accessToken });
-      setMonthlyData(res.data || null);
-    } catch (err: any) { console.error('Failed to load monthly RF schedule:', err); }
-    finally { setLoading(false); }
+      if (res.data) { monthlyCache.current.set(cacheKey, res.data); setMonthlyData(res.data); }
+      else setMonthlyError('데이터를 불러오지 못했습니다.');
+    } catch (err: any) {
+      setMonthlyError(err.message || '월간 데이터 로드 실패');
+    }
+    finally { setMonthlyLoading(false); }
   }, [accessToken, monthYear, monthNum]);
 
   useEffect(() => {
@@ -415,11 +455,11 @@ export default function RfSchedulePage() {
     else fetchMonthlyData();
   }, [viewMode, fetchData, fetchWeeklyData, fetchMonthlyData]);
 
-  // WebSocket 실시간 갱신
+  // WebSocket 실시간 갱신 (forceRefresh=true로 캐시 무효화)
   const refreshActive = useCallback(() => {
     if (viewMode === 'daily') fetchData();
-    else if (viewMode === 'weekly') fetchWeeklyData();
-    else fetchMonthlyData();
+    else if (viewMode === 'weekly') fetchWeeklyData(true);
+    else fetchMonthlyData(true);
   }, [viewMode, fetchData, fetchWeeklyData, fetchMonthlyData]);
   useScheduleRefresh(refreshActive);
 
@@ -430,8 +470,8 @@ export default function RfSchedulePage() {
   const handleModalSave = () => {
     setModalOpen(false);
     if (viewMode === 'daily') fetchData();
-    else if (viewMode === 'weekly') fetchWeeklyData();
-    else fetchMonthlyData();
+    else if (viewMode === 'weekly') fetchWeeklyData(true);
+    else fetchMonthlyData(true);
   };
 
   const goToday = () => setDateStr(toDateStr(new Date()));
@@ -517,7 +557,6 @@ export default function RfSchedulePage() {
             <button onClick={() => setDateStr(shiftDay(dateStr, -1))} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><ChevronLeft size={20} /></button>
             <div className="flex items-center gap-3">
               <span className="font-semibold text-slate-800">{formatDateFull(dateStr)}</span>
-              <button onClick={goToday} className="text-xs px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100">오늘</button>
             </div>
             <button onClick={() => setDateStr(shiftDay(dateStr, 1))} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><ChevronRight size={20} /></button>
           </div>
@@ -607,16 +646,18 @@ export default function RfSchedulePage() {
               <button onClick={() => setWeekDate(shiftWeek(weekDate, -1))} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><ChevronLeft size={20} /></button>
               <div className="flex items-center gap-3">
                 <span className="font-semibold text-slate-800">{wkLabel}</span>
-                <button onClick={() => setWeekDate(toDateStr(new Date()))} className="text-xs px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100">이번주</button>
               </div>
               <button onClick={() => setWeekDate(shiftWeek(weekDate, 1))} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><ChevronRight size={20} /></button>
             </div>
 
-            {loading && !weeklyData && (
-              <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm">로딩 중...</div></div>
+            {weeklyLoading && (
+              <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm animate-pulse">데이터 로딩 중...</div></div>
+            )}
+            {!weeklyLoading && weeklyError && (
+              <div className="flex items-center justify-center h-32 text-red-500 text-sm">{weeklyError}</div>
             )}
 
-            {weeklyData && (
+            {!weeklyLoading && weeklyData && (
               <div className="bg-white rounded-lg border overflow-x-auto">
                 <div style={{ minWidth: '700px' }}>
                   <div className="grid border-b-2 border-slate-300" style={{ gridTemplateColumns: '60px repeat(6, 1fr)' }}>
@@ -674,17 +715,18 @@ export default function RfSchedulePage() {
             <button onClick={() => shiftMonth(-1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><ChevronLeft size={20} /></button>
             <div className="flex items-center gap-3">
               <span className="font-semibold text-slate-800">{monthYear}년 {monthNum}월</span>
-              <button onClick={() => { setMonthYear(new Date().getFullYear()); setMonthNum(new Date().getMonth() + 1); }}
-                className="text-xs px-2.5 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100">이번달</button>
             </div>
             <button onClick={() => shiftMonth(1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><ChevronRight size={20} /></button>
           </div>
 
-          {loading && !monthlyData && (
-            <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm">로딩 중...</div></div>
+          {monthlyLoading && (
+            <div className="flex items-center justify-center h-32"><div className="text-slate-400 text-sm animate-pulse">데이터 로딩 중...</div></div>
+          )}
+          {!monthlyLoading && monthlyError && (
+            <div className="flex items-center justify-center h-32 text-red-500 text-sm">{monthlyError}</div>
           )}
 
-          {monthlyData && (() => {
+          {!monthlyLoading && monthlyData && (() => {
             const dayCounts: Record<string, number> = {};
             for (const roomId of Object.keys(monthlyData.grid || {})) {
               for (const ds of Object.keys(monthlyData.grid[roomId] || {})) {

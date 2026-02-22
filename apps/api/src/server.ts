@@ -3,6 +3,7 @@ import app from './app';
 import { env } from './config/env';
 import { initWebSocket } from './websocket';
 import { redis } from './lib/redis';
+import { startSheetSyncWorker, startAutoSheetSync } from './queues';
 
 const server = http.createServer(app);
 
@@ -20,4 +21,10 @@ server.listen(env.PORT, () => {
   console.log(`[Server] 서울온케어 API 서버 시작 - 포트 ${env.PORT}`);
   console.log(`[Server] WebSocket 경로: /ws`);
   console.log(`[Server] 환경: ${env.NODE_ENV}`);
+
+  // BullMQ Worker 시작 (Redis 없으면 인라인 모드)
+  startSheetSyncWorker();
+
+  // 5분 자동 시트 동기화 타이머 시작
+  startAutoSheetSync();
 });

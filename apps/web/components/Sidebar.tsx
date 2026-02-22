@@ -31,6 +31,7 @@ import {
   Building2,
   Stethoscope,
   Truck,
+  LayoutGrid,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth';
@@ -54,6 +55,7 @@ const navGroups: NavGroup[] = [
     label: '입원관리',
     icon: Building2,
     items: [
+      { href: '/dashboard/ward', label: '입원현황표', icon: LayoutGrid },
       { href: '/dashboard/beds', label: '베드관리', icon: BedDouble },
       { href: '/dashboard/room-booking', label: '병실현황', icon: DoorOpen },
       { href: '/dashboard/admission-reservation', label: '입원예약', icon: UserPlus },
@@ -67,10 +69,12 @@ const navGroups: NavGroup[] = [
     icon: Stethoscope,
     items: [
       { href: '/dashboard/doctor-schedule', label: '의사별일정', icon: CalendarClock },
-      { href: '/dashboard/appointments', label: '외래관리', icon: Calendar },
-      { href: '/dashboard/rf-evaluation', label: '고주파현황', icon: FileCheck },
+      { href: '/dashboard/outpatient', label: '외래예약', icon: Calendar },
+      { href: '/dashboard/appointments', label: '외래관리(구)', icon: Calendar },
+      { href: '/dashboard/rf-evaluation', label: '고주파평가', icon: FileCheck },
       { href: '/dashboard/scheduling/manual-therapy', label: '도수예약현황', icon: Hand },
       { href: '/dashboard/scheduling/rf-schedule', label: '고주파예약현황', icon: Zap },
+      { href: '/dashboard/scheduling', label: '예약캘린더', icon: Calendar },
     ],
   },
   {
@@ -100,6 +104,7 @@ const navGroups: NavGroup[] = [
     icon: Settings,
     items: [
       { href: '/dashboard/admin/doctor-work', label: '닥터근무조정', icon: CalendarClock },
+      { href: '/dashboard/admin/google-sheets', label: '시트연동', icon: FileCheck },
       { href: '/dashboard/imports', label: 'Import현황', icon: Upload },
       { href: '/dashboard/audit', label: '감사로그', icon: ScrollText },
       { href: '/dashboard/admin', label: '관리자설정', icon: Settings },
@@ -210,7 +215,7 @@ export default function Sidebar() {
               {isExpanded && (
                 <div className="ml-4 border-l border-slate-700">
                   {group.items.map((item) => {
-                    const isActive = pathname === item.href || (pathname.startsWith(item.href + '/'));
+                    const isActive = pathname === item.href || (pathname.startsWith(item.href + '/') && !group.items.some(o => o.href !== item.href && o.href.length > item.href.length && pathname.startsWith(o.href)));
                     const Icon = item.icon;
                     return (
                       <Link

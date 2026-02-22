@@ -396,7 +396,7 @@ export async function autoAssignRfRoom(
       deletedAt: null,
       status: { not: 'CANCELLED' },
     },
-    select: { roomId: true, startTime: true, duration: true },
+    select: { roomId: true, startTime: true, durationMinutes: true },
   });
 
   function timeToMin(t: string) {
@@ -411,7 +411,7 @@ export async function autoAssignRfRoom(
     const roomSlots = existingSlots.filter(s => s.roomId === room.id);
     const hasConflict = roomSlots.some(s => {
       const sStart = timeToMin(s.startTime);
-      const sEnd = sStart + s.duration + 30;
+      const sEnd = sStart + s.durationMinutes + 30;
       return checkStart < sEnd && sStart < checkEnd;
     });
 

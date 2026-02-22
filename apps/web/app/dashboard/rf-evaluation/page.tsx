@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuthStore } from '../../../stores/auth';
 import { api } from '../../../lib/api';
 import { ChevronLeft, ChevronRight, Calendar, Plus, Printer, Search, X } from 'lucide-react';
@@ -69,6 +69,7 @@ export default function RfEvaluationPage() {
   const [loading, setLoading] = useState(false);
   const [searchPatient, setSearchPatient] = useState('');
   const [searchDoctor, setSearchDoctor] = useState('');
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Evaluation list
   const [evaluations, setEvaluations] = useState<EvaluationItem[]>([]);
@@ -131,11 +132,26 @@ export default function RfEvaluationPage() {
     setLoading(false);
   }, [date, roundDoctor, accessToken]);
 
+  // 날짜/탭 변경 시 즉시 로드
   useEffect(() => {
     if (tab === 'evaluation') fetchEvaluations();
     else if (tab === 'round-prep') fetchRoundPrep();
     else fetchRoundPrint();
-  }, [tab, fetchEvaluations, fetchRoundPrep, fetchRoundPrint]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, date, evalPage, roundDoctor]);
+
+  // 검색어 변경 시 500ms 디바운스
+  useEffect(() => {
+    if (tab !== 'evaluation') return;
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      fetchEvaluations();
+    }, 500);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchPatient, searchDoctor]);
 
   const navigateDate = (delta: number) => {
     const d = new Date(date);
@@ -194,7 +210,6 @@ export default function RfEvaluationPage() {
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="border rounded px-2 py-1 text-sm" />
         </div>
         <button onClick={() => navigateDate(1)} className="p-1.5 rounded hover:bg-slate-100"><ChevronRight size={18} /></button>
-        <button onClick={() => setDate(toDateStr(new Date()))} className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded hover:bg-blue-100">오늘</button>
 
         {(tab === 'round-prep' || tab === 'round-print') && (
           <div className="flex items-center gap-2 ml-4">
